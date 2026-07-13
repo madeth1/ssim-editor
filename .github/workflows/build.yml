@@ -5,6 +5,10 @@ on:
   push:
     tags: ["v*"]
 
+# tauri-action creates the draft release and uploads installers to it
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
