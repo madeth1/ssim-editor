@@ -1,6 +1,6 @@
 [package]
 name = "ssim-editor"
-version = "0.1.3"
+version = "0.1.4"
 description = "Desktop editor for SSIM airline schedule files with rule-based bulk edits"
 authors = ["madeth1"]
 edition = "2021"
