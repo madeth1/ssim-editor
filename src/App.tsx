@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { FlightTable, changeKey, type ChangeMap } from "@/components/FlightTable";
 import { RulesPanel } from "@/components/RulesPanel";
 import { basename, pickAndReadSsim, saveSsimAs } from "@/lib/file-io";
+import { checkForUpdates } from "@/lib/update";
 import { applyRules } from "@/rules/engine";
 import { loadRules, saveRules } from "@/rules/storage";
 import type { Change, Rule } from "@/rules/types";
@@ -98,6 +99,10 @@ function App() {
     setRulesState(next);
     saveRules(next);
   };
+
+  useEffect(() => {
+    checkForUpdates();
+  }, []);
 
   // ponytail: dev-only harness — open http://localhost:1420/?demo in a plain
   // browser (no Tauri) to smoke-test the UI with fixture data. DCE'd in prod.
