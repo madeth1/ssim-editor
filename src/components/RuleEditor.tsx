@@ -16,20 +16,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LEG_FIELDS, LEG_FIELD_NAMES } from "@/ssim/types";
+import { LEG_FIELDS } from "@/ssim/types";
 import { loadPresets, savePresets, type Preset } from "@/rules/presets";
-import type {
-  ActionKind,
-  Condition,
-  ConditionOp,
-  Rule,
-  RuleAction,
+import {
+  ACTION_FIELDS,
+  CONDITION_FIELDS,
+  type ActionKind,
+  type Condition,
+  type ConditionOp,
+  type Rule,
+  type RuleAction,
 } from "@/rules/types";
 
-const FIELD_OPTIONS = LEG_FIELD_NAMES.map((f) => ({
-  value: f,
-  label: LEG_FIELDS[f].label,
-}));
+const toOptions = (fields: typeof CONDITION_FIELDS) =>
+  fields.map((f) => ({ value: f, label: LEG_FIELDS[f].label }));
+
+const CONDITION_FIELD_OPTIONS = toOptions(CONDITION_FIELDS);
+const ACTION_FIELD_OPTIONS = toOptions(ACTION_FIELDS);
 
 const OP_OPTIONS: { value: ConditionOp; label: string }[] = [
   { value: "equals", label: "is" },
@@ -46,7 +49,6 @@ const VALUELESS_OPS = ["isBlank", "isNotBlank"];
 
 const KIND_OPTIONS: { value: ActionKind; label: string }[] = [
   { value: "setValue", label: "set to" },
-  { value: "shiftTimeMinutes", label: "shift time by (min)" },
   { value: "replaceText", label: "replace text" },
 ];
 
@@ -70,7 +72,6 @@ const VALUE_HINT: Record<ConditionOp | ActionKind, string> = {
   isBlank: "",
   isNotBlank: "",
   setValue: "new value",
-  shiftTimeMinutes: "e.g. 15 or -30",
   replaceText: "old=>new",
 };
 
@@ -243,8 +244,6 @@ function validate(rule: Rule): string | null {
       if (a.value.trim().length > spec.len)
         return `"${a.value.trim()}" doesn't fit ${spec.label} (max ${spec.len} chars).`;
     }
-    if (a.kind === "shiftTimeMinutes" && !/^-?\d+$/.test(a.value.trim()))
-      return "Time shift must be a whole number of minutes.";
     if (a.kind === "replaceText" && (!a.value.includes("=>") || !a.value.split("=>")[0]))
       return 'Replace text needs the form "old=>new" with a non-empty "old".';
     if (a.kind === "setValue" && !a.value.trim())
@@ -331,7 +330,7 @@ export function RuleEditor({
                   <Picker
                     value={c.field}
                     onChange={(field) => setCondition(i, { field })}
-                    options={FIELD_OPTIONS}
+                    options={CONDITION_FIELD_OPTIONS}
                     className="w-40 shrink-0"
                   />
                 )}
@@ -407,7 +406,7 @@ export function RuleEditor({
                 <Picker
                   value={a.field}
                   onChange={(field) => setAction(i, { field })}
-                  options={FIELD_OPTIONS}
+                  options={ACTION_FIELD_OPTIONS}
                   className="w-40 shrink-0"
                 />
                 <Picker
@@ -455,7 +454,7 @@ export function RuleEditor({
                   ...r,
                   actions: [
                     ...r.actions,
-                    { field: "aircraftSTD", kind: "setValue", value: "" },
+                    { field: "aircraftType", kind: "setValue", value: "" },
                   ],
                 }))
               }

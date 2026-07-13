@@ -109,13 +109,10 @@ function App() {
       setRulesState([
         {
           id: "demo",
-          name: "Shift FCO departures +15",
+          name: "FCO departures on 32Q",
           enabled: true,
           conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
-          actions: [
-            { field: "aircraftSTD", kind: "shiftTimeMinutes", value: "15" },
-            { field: "passengerSTD", kind: "shiftTimeMinutes", value: "15" },
-          ],
+          actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
         },
         {
           id: "demo2",
@@ -249,7 +246,7 @@ function App() {
                 <Input
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  placeholder="Filter by flight, station, or aircraft…"
+                  placeholder="Filter by flight, station, or equipment…"
                   className="h-7 max-w-72 text-sm"
                 />
                 {filter && (

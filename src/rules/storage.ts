@@ -1,5 +1,11 @@
-import { LEG_FIELDS } from "../ssim/types";
-import { ACTION_KINDS, CONDITION_OPS, type Rule } from "./types";
+import {
+  ACTION_FIELDS,
+  ACTION_KINDS,
+  CONDITION_FIELDS,
+  CONDITION_OPS,
+  FIELDLESS_OPS,
+  type Rule,
+} from "./types";
 
 // ponytail: localStorage persists fine in the Tauri webview; move to the app
 // config dir (tauri fs) only if rules ever need to survive a webview data reset.
@@ -30,11 +36,12 @@ export function parseRulesJson(json: string): Rule[] {
     const conditions = Array.isArray(r?.conditions) ? r.conditions : [];
     const actions = Array.isArray(r?.actions) ? r.actions : [];
     for (const c of conditions) {
-      if (!(c?.field in LEG_FIELDS) || !CONDITION_OPS.includes(c.op) || typeof c.value !== "string")
+      const fieldOk = FIELDLESS_OPS.includes(c?.op) || CONDITION_FIELDS.includes(c?.field);
+      if (!fieldOk || !CONDITION_OPS.includes(c?.op) || typeof c?.value !== "string")
         throw new Error(`Rule "${name}" has an invalid condition: ${JSON.stringify(c)}`);
     }
     for (const a of actions) {
-      if (!(a?.field in LEG_FIELDS) || !ACTION_KINDS.includes(a.kind) || typeof a.value !== "string")
+      if (!ACTION_FIELDS.includes(a?.field) || !ACTION_KINDS.includes(a.kind) || typeof a.value !== "string")
         throw new Error(`Rule "${name}" has an invalid action: ${JSON.stringify(a)}`);
     }
     return {

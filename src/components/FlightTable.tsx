@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { TriangleAlert } from "lucide-react";
-import type { FlightLeg, LegField } from "@/ssim/types";
+import { LEG_FIELDS, type FlightLeg, type LegField } from "@/ssim/types";
 import type { Change } from "@/rules/types";
 import { cn } from "@/lib/utils";
 
@@ -63,9 +63,9 @@ function F({
 }
 
 const GRID =
-  "grid grid-cols-[7.5rem_8.5rem_4.5rem_4.5rem_9.5rem_9.5rem_3.5rem_3rem_6.5rem_8rem_11rem_2rem] items-center gap-x-3 px-4";
+  "grid grid-cols-[7.5rem_8.5rem_4.5rem_4.5rem_9.5rem_9.5rem_4rem_5.5rem_8.5rem_8.5rem_11rem_2rem] items-center gap-x-3 px-4";
 // keep in sync with the column tracks above (tracks + gaps + padding)
-const MIN_W = "min-w-[89rem]";
+const MIN_W = "min-w-[94rem]";
 
 export function FlightTable({
   legs,
@@ -93,17 +93,19 @@ export function FlightTable({
           "sticky top-0 z-10 border-b bg-muted py-2 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase",
         )}
       >
+        {/* single-field columns take their header from LEG_FIELDS so the
+            table and the rule editor always use the same names */}
         <span>Flight</span>
         <span>Sector</span>
-        <span>STD</span>
-        <span>STA</span>
-        <span>Days</span>
+        <span>{LEG_FIELDS.aircraftSTD.label}</span>
+        <span>{LEG_FIELDS.aircraftSTA.label}</span>
+        <span>{LEG_FIELDS.daysOfOperation.label}</span>
         <span>Period</span>
-        <span>Eqp</span>
-        <span>Svc</span>
-        <span>Restr</span>
-        <span>Sales cfg</span>
-        <span>PRBD</span>
+        <span>{LEG_FIELDS.aircraftType.label}</span>
+        <span>{LEG_FIELDS.serviceType.label}</span>
+        <span>{LEG_FIELDS.trafficRestriction.label}</span>
+        <span>{LEG_FIELDS.salesConfig.label}</span>
+        <span>{LEG_FIELDS.prbd.label}</span>
         <span />
       </div>
       <div

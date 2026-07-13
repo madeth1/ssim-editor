@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
 import { makeSampleSsim } from "../ssim/fixture";
-import { applyRules, parseSsimDate, shiftHHMM } from "./engine";
+import { applyRules, parseSsimDate } from "./engine";
 import type { Rule } from "./types";
 
 const legs = () => parseSsim(makeSampleSsim()).legs;
@@ -56,20 +56,16 @@ describe("actions", () => {
     ]);
   });
 
-  it("shiftTimeMinutes shifts and never mutates input", () => {
+  it("never mutates the input legs", () => {
     const input = legs();
     const { legs: out } = applyRules(input, [
       rule({
         conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
-        actions: [
-          { field: "passengerSTD", kind: "shiftTimeMinutes", value: "15" },
-          { field: "aircraftSTD", kind: "shiftTimeMinutes", value: "15" },
-        ],
+        actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
       }),
     ]);
-    expect(out[0].values.passengerSTD).toBe("0725");
-    expect(out[0].values.aircraftSTD).toBe("0725");
-    expect(input[0].values.passengerSTD).toBe("0710"); // untouched
+    expect(out[0].values.aircraftType).toBe("32Q");
+    expect(input[0].values.aircraftType).toBe("32N"); // untouched
   });
 
   it("replaceText", () => {
@@ -130,14 +126,7 @@ describe("actions", () => {
   });
 });
 
-describe("time + date helpers", () => {
-  it("shiftHHMM wraps midnight with warning", () => {
-    expect(shiftHHMM("0710", 75)).toEqual({ time: "0825" });
-    expect(shiftHHMM("2350", 20)).toEqual({ time: "0010", warning: expect.stringMatching(/midnight/) });
-    expect(shiftHHMM("0010", -20)).toEqual({ time: "2350", warning: expect.stringMatching(/midnight/) });
-    expect(shiftHHMM("", 10).warning).toMatch(/not a HHMM/);
-  });
-
+describe("date helpers", () => {
   it("parseSsimDate", () => {
     expect(parseSsimDate("01JAN26")).toBe(20260101);
     expect(parseSsimDate("28MAR26")).toBe(20260328);
