@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "./parse";
 import { serializeSsim } from "./serialize";
+import { legField } from "./types";
 import { makeSampleSsim } from "./fixture";
 
 const sample = makeSampleSsim();
@@ -10,15 +11,15 @@ describe("parseSsim", () => {
     const file = parseSsim(sample);
     expect(file.lines).toHaveLength(8);
     expect(file.legs).toHaveLength(4);
-    expect(file.legs[0].values.airline).toBe("XX");
-    expect(file.legs[0].values.flightNumber).toBe("1002");
-    expect(file.legs[0].values.depStation).toBe("FCO");
-    expect(file.legs[0].values.passengerSTD).toBe("0710");
-    expect(file.legs[0].values.aircraftType).toBe("32N");
-    expect(file.legs[0].values.prbd).toBe("JCDZPIYBMUHXQVWSTLK");
-    expect(file.legs[0].values.salesConfig).toBe("Y180");
-    expect(file.legs[2].values.daysOfOperation).toBe("1 3 5 7");
-    expect(file.legs[3].values.airline).toBe("YY");
+    expect(legField(file.legs[0], "airline")).toBe("XX");
+    expect(legField(file.legs[0], "flightNumber")).toBe("1002");
+    expect(legField(file.legs[0], "depStation")).toBe("FCO");
+    expect(legField(file.legs[0], "passengerSTD")).toBe("0710");
+    expect(legField(file.legs[0], "aircraftType")).toBe("32N");
+    expect(legField(file.legs[0], "prbd")).toBe("JCDZPIYBMUHXQVWSTLK");
+    expect(legField(file.legs[0], "salesConfig")).toBe("Y180");
+    expect(legField(file.legs[2], "daysOfOperation")).toBe("1 3 5 7");
+    expect(legField(file.legs[3], "airline")).toBe("YY");
   });
 
   it("handles CRLF and remembers it", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
+import { legField } from "../ssim/types";
 import { makeSampleSsim } from "../ssim/fixture";
 import { applyRules, parseSsimDate } from "./engine";
 import type { Rule } from "./types";
@@ -50,7 +51,7 @@ describe("actions", () => {
         actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
       }),
     ]);
-    expect(out[0].values.aircraftType).toBe("32Q");
+    expect(legField(out[0], "aircraftType")).toBe("32Q");
     expect(changes).toEqual([
       expect.objectContaining({ field: "aircraftType", before: "32N", after: "32Q", ruleName: "test rule" }),
     ]);
@@ -64,8 +65,8 @@ describe("actions", () => {
         actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
       }),
     ]);
-    expect(out[0].values.aircraftType).toBe("32Q");
-    expect(input[0].values.aircraftType).toBe("32N"); // untouched
+    expect(legField(out[0], "aircraftType")).toBe("32Q");
+    expect(legField(input[0], "aircraftType")).toBe("32N"); // untouched
   });
 
   it("replaceText", () => {
@@ -75,7 +76,7 @@ describe("actions", () => {
         actions: [{ field: "daysOfOperation", kind: "replaceText", value: "7=> " }],
       }),
     ]);
-    expect(out[2].values.daysOfOperation).toBe("1 3 5");
+    expect(legField(out[2], "daysOfOperation")).toBe("1 3 5");
   });
 
   it("adds a traffic restriction only where none is present", () => {
@@ -86,8 +87,8 @@ describe("actions", () => {
       }),
     ]);
     expect(changes).toHaveLength(3);
-    expect(out[0].values.trafficRestriction).toBe("B"); // was blank
-    expect(out[3].values.trafficRestriction).toBe("A"); // YY leg untouched
+    expect(legField(out[0], "trafficRestriction")).toBe("B"); // was blank
+    expect(legField(out[3], "trafficRestriction")).toBe("A"); // YY leg untouched
   });
 
   it("changes equipment 319 -> 320 without touching adjacent booking classes", () => {
@@ -98,8 +99,8 @@ describe("actions", () => {
       }),
     ]);
     expect(changes).toHaveLength(3);
-    expect(out[0].values.aircraftType).toBe("32Q");
-    expect(out[0].values.prbd).toBe("JCDZPIYBMUHXQVWSTLK"); // untouched
+    expect(legField(out[0], "aircraftType")).toBe("32Q");
+    expect(legField(out[0], "prbd")).toBe("JCDZPIYBMUHXQVWSTLK"); // untouched
   });
 
   it("warns at preview time when a value overflows its column", () => {
@@ -119,9 +120,9 @@ describe("actions", () => {
       rule({ id: "b", conditions: [{ field: "flightNumber", op: "equals", value: "1002" }], actions: [{ field: "depStation", kind: "setValue", value: "CIA" }] }),
       rule({ id: "c", conditions: [{ field: "depStation", op: "equals", value: "CIA" }], actions: [{ field: "depTerminal", kind: "setValue", value: "T2" }] }),
     ]);
-    expect(out[0].values.serviceType).toBe("J");
-    expect(out[0].values.depStation).toBe("CIA");
-    expect(out[0].values.depTerminal).toBe("T2"); // rule c saw rule b's output
+    expect(legField(out[0], "serviceType")).toBe("J");
+    expect(legField(out[0], "depStation")).toBe("CIA");
+    expect(legField(out[0], "depTerminal")).toBe("T2"); // rule c saw rule b's output
     expect(changes.map((c) => c.ruleId)).toEqual(["b", "c"]);
   });
 });

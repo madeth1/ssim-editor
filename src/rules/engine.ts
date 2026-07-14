@@ -1,4 +1,4 @@
-import { LEG_FIELDS, type FlightLeg } from "../ssim/types";
+import { LEG_FIELDS, legField, type FlightLeg } from "../ssim/types";
 import type { Change, Condition, Rule, RuleAction } from "./types";
 
 const MONTHS = [
@@ -19,28 +19,28 @@ export function parseSsimDate(s: string): number | null {
 function matches(leg: FlightLeg, cond: Condition): boolean {
   switch (cond.op) {
     case "equals":
-      return leg.values[cond.field] === cond.value.trim();
+      return legField(leg, cond.field) === cond.value.trim();
     case "notEquals":
-      return leg.values[cond.field] !== cond.value.trim();
+      return legField(leg, cond.field) !== cond.value.trim();
     case "oneOf":
       return cond.value
         .split(",")
         .map((v) => v.trim())
-        .includes(leg.values[cond.field]);
+        .includes(legField(leg, cond.field));
     case "contains":
-      return leg.values[cond.field].includes(cond.value.trim());
+      return legField(leg, cond.field).includes(cond.value.trim());
     case "operatesOnDay":
-      return leg.values.daysOfOperation.includes(cond.value.trim());
+      return legField(leg, "daysOfOperation").includes(cond.value.trim());
     case "isBlank":
-      return leg.values[cond.field] === "";
+      return legField(leg, cond.field) === "";
     case "isNotBlank":
-      return leg.values[cond.field] !== "";
+      return legField(leg, cond.field) !== "";
     case "inDateRange": {
       const [fromS, toS] = cond.value.split("-");
       const from = parseSsimDate(fromS ?? "");
       const to = parseSsimDate(toS ?? "");
-      const legFrom = parseSsimDate(leg.values.periodFrom);
-      const legTo = parseSsimDate(leg.values.periodTo);
+      const legFrom = parseSsimDate(legField(leg, "periodFrom"));
+      const legTo = parseSsimDate(legField(leg, "periodTo"));
       if (from === null || to === null || legFrom === null || legTo === null)
         return false;
       return legFrom <= to && legTo >= from; // period overlap
@@ -73,7 +73,7 @@ export function applyRules(
       // no conditions = apply to every leg
       if (!rule.conditions.every((c) => matches(leg, c))) continue;
       for (const action of rule.actions) {
-        const before = leg.values[action.field];
+        const before = legField(leg, action.field);
         const after = applyAction(before, action);
         if (after === before) continue;
         // surface overflow at preview time; export would throw in padField

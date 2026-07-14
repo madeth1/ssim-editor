@@ -34,8 +34,16 @@ export interface FlightLeg {
   /** index into SsimFile.lines */
   lineIndex: number;
   raw: string;
-  /** trimmed field values, keyed by field name */
-  values: Record<LegField, string>;
+  /** only rule-modified fields; absent on freshly parsed legs */
+  values?: Partial<Record<LegField, string>>;
+}
+
+/** Trimmed field value: rule override if present, else sliced from the raw line. */
+export function legField(leg: FlightLeg, field: LegField): string {
+  const v = leg.values?.[field];
+  if (v !== undefined) return v;
+  const { start, len } = LEG_FIELDS[field];
+  return leg.raw.slice(start, start + len).trim();
 }
 
 export interface SsimFile {

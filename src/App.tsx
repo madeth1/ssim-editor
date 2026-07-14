@@ -11,7 +11,7 @@ import { checkForUpdates } from "@/lib/update";
 import { applyRules } from "@/rules/engine";
 import { loadRules, saveRules } from "@/rules/storage";
 import type { Change, Rule } from "@/rules/types";
-import { LEG_FIELDS, type FlightLeg, type SsimFile } from "@/ssim/types";
+import { LEG_FIELDS, legField, type FlightLeg, type SsimFile } from "@/ssim/types";
 import { parseSsim } from "@/ssim/parse";
 import { serializeSsim } from "@/ssim/serialize";
 
@@ -48,7 +48,8 @@ function ChangesDrawer({
             return (
               <tr key={i} className="border-t border-border/50">
                 <td className="px-4 py-1">
-                  {leg?.values.airline} {leg?.values.flightNumber}
+                  {leg && legField(leg, "airline")}{" "}
+                  {leg && legField(leg, "flightNumber")}
                 </td>
                 <td className="px-2 py-1">{LEG_FIELDS[c.field].label}</td>
                 <td className="px-2 py-1 text-muted-foreground line-through">
@@ -160,18 +161,18 @@ function App() {
     if (!q) return legs;
     return legs.filter((l) =>
       [
-        l.values.airline + l.values.flightNumber,
-        l.values.airline + " " + l.values.flightNumber,
-        l.values.depStation,
-        l.values.arrStation,
-        l.values.aircraftType,
+        legField(l, "airline") + legField(l, "flightNumber"),
+        legField(l, "airline") + " " + legField(l, "flightNumber"),
+        legField(l, "depStation"),
+        legField(l, "arrStation"),
+        legField(l, "aircraftType"),
       ].some((v) => v.includes(q)),
     );
   }, [file, applied, preview, filter]);
 
   const meta = useMemo(() => {
     if (!file || file.legs.length === 0) return null;
-    const carriers = [...new Set(file.legs.map((l) => l.values.airline))];
+    const carriers = [...new Set(file.legs.map((l) => legField(l, "airline")))];
     return { carriers: carriers.join(", "), count: file.legs.length };
   }, [file]);
 

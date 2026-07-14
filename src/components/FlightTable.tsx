@@ -1,7 +1,7 @@
 import { useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { TriangleAlert } from "lucide-react";
-import { LEG_FIELDS, type FlightLeg, type LegField } from "@/ssim/types";
+import { LEG_FIELDS, legField, type FlightLeg, type LegField } from "@/ssim/types";
 import type { Change } from "@/rules/types";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +48,7 @@ function F({
   className?: string;
 }) {
   const change = changes.get(changeKey(leg.lineIndex, field));
-  if (!change) return <span className={className}>{leg.values[field]}</span>;
+  if (!change) return <span className={className}>{legField(leg, field)}</span>;
   return (
     <span
       className={cn(
@@ -57,7 +57,7 @@ function F({
       )}
       title={`${change.before || "(blank)"} → ${change.after || "(blank)"} · ${change.ruleName}${change.warning ? ` · ⚠ ${change.warning}` : ""}`}
     >
-      {leg.values[field] || "·"}
+      {legField(leg, field) || "·"}
     </span>
   );
 }
@@ -142,7 +142,7 @@ export function FlightTable({
                 {changes.has(changeKey(leg.lineIndex, "daysOfOperation")) ? (
                   <F leg={leg} field="daysOfOperation" changes={changes} />
                 ) : (
-                  <DaysStrip value={leg.values.daysOfOperation} />
+                  <DaysStrip value={legField(leg, "daysOfOperation")} />
                 )}
                 <span className="flex gap-1 whitespace-nowrap text-xs">
                   <F leg={leg} field="periodFrom" changes={changes} />

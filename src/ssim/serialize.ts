@@ -9,7 +9,7 @@ import {
 /** Splice a leg's (possibly modified) values back into its original raw line. */
 export function patchLegLine(leg: FlightLeg): string {
   let line = leg.raw;
-  for (const [field, value] of Object.entries(leg.values) as [
+  for (const [field, value] of Object.entries(leg.values ?? {}) as [
     LegField,
     string,
   ][]) {
@@ -29,7 +29,7 @@ export function patchLegLine(leg: FlightLeg): string {
 export function serializeSsim(file: SsimFile, legs: FlightLeg[]): string {
   const lines = [...file.lines];
   for (const leg of legs) {
-    lines[leg.lineIndex] = patchLegLine(leg);
+    if (leg.values) lines[leg.lineIndex] = patchLegLine(leg);
   }
   return lines.join(file.eol) + (file.trailingNewline ? file.eol : "");
 }
