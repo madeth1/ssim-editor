@@ -21,9 +21,6 @@ jobs:
           - platform: windows-latest # x64 .exe/.msi
             args: ""
             rust-target: ""
-          - platform: windows-latest # ARM64 .exe/.msi (cross-compiled)
-            args: "--target aarch64-pc-windows-msvc"
-            rust-target: "aarch64-pc-windows-msvc"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
