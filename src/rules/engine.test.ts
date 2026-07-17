@@ -1,16 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
-import { legField } from "../ssim/types";
+import { headerField, legField } from "../ssim/types";
 import { makeSampleSsim } from "../ssim/fixture";
 import { applyRules, parseSsimDate } from "./engine";
-import type { Rule } from "./types";
+import type { HeaderRule, LegRule, Rule } from "./types";
 
 const legs = () => parseSsim(makeSampleSsim()).legs;
+const headers = () => parseSsim(makeSampleSsim()).headers;
 
-const rule = (over: Partial<Rule>): Rule => ({
+const rule = (over: Partial<LegRule>): Rule => ({
   id: "r1",
   name: "test rule",
   enabled: true,
+  target: "leg",
+  conditions: [],
+  actions: [],
+  ...over,
+});
+
+const headerRule = (over: Partial<HeaderRule>): Rule => ({
+  id: "hr1",
+  name: "test header rule",
+  enabled: true,
+  target: "header",
   conditions: [],
   actions: [],
   ...over,
@@ -35,7 +47,7 @@ describe("conditions", () => {
   ];
   for (const [name, conditions, expected] of cases) {
     it(`${name} matches ${expected} legs`, () => {
-      const { changes } = applyRules(legs(), [
+      const { changes } = applyRules(legs(), headers(), [
         rule({ conditions, actions: [{ field: "depTerminal", kind: "setValue", value: "T9" }] }),
       ]);
       expect(changes).toHaveLength(expected);
@@ -45,7 +57,7 @@ describe("conditions", () => {
 
 describe("actions", () => {
   it("setValue + change log before/after", () => {
-    const { legs: out, changes } = applyRules(legs(), [
+    const { legs: out, changes } = applyRules(legs(), headers(), [
       rule({
         conditions: [{ field: "flightNumber", op: "equals", value: "1002" }],
         actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
@@ -59,7 +71,7 @@ describe("actions", () => {
 
   it("never mutates the input legs", () => {
     const input = legs();
-    const { legs: out } = applyRules(input, [
+    const { legs: out } = applyRules(input, headers(), [
       rule({
         conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
         actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
@@ -70,7 +82,7 @@ describe("actions", () => {
   });
 
   it("replaceText", () => {
-    const { legs: out } = applyRules(legs(), [
+    const { legs: out } = applyRules(legs(), headers(), [
       rule({
         conditions: [{ field: "flightNumber", op: "equals", value: "1408" }],
         actions: [{ field: "daysOfOperation", kind: "replaceText", value: "7=> " }],
@@ -80,7 +92,7 @@ describe("actions", () => {
   });
 
   it("adds a traffic restriction only where none is present", () => {
-    const { legs: out, changes } = applyRules(legs(), [
+    const { legs: out, changes } = applyRules(legs(), headers(), [
       rule({
         conditions: [{ field: "trafficRestriction", op: "isBlank", value: "" }],
         actions: [{ field: "trafficRestriction", kind: "setValue", value: "B" }],
@@ -92,7 +104,7 @@ describe("actions", () => {
   });
 
   it("changes equipment 319 -> 320 without touching adjacent booking classes", () => {
-    const { legs: out, changes } = applyRules(legs(), [
+    const { legs: out, changes } = applyRules(legs(), headers(), [
       rule({
         conditions: [{ field: "aircraftType", op: "equals", value: "32N" }],
         actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
@@ -104,7 +116,7 @@ describe("actions", () => {
   });
 
   it("warns at preview time when a value overflows its column", () => {
-    const { changes } = applyRules(legs(), [
+    const { changes } = applyRules(legs(), headers(), [
       rule({
         conditions: [{ field: "flightNumber", op: "equals", value: "1002" }],
         actions: [{ field: "aircraftType", kind: "replaceText", value: "32N=>32N-NEO" }],
@@ -115,7 +127,7 @@ describe("actions", () => {
   });
 
   it("disabled rules and later rules chain in order", () => {
-    const { legs: out, changes } = applyRules(legs(), [
+    const { legs: out, changes } = applyRules(legs(), headers(), [
       rule({ id: "a", enabled: false, conditions: [{ field: "airline", op: "equals", value: "XX" }], actions: [{ field: "serviceType", kind: "setValue", value: "C" }] }),
       rule({ id: "b", conditions: [{ field: "flightNumber", op: "equals", value: "1002" }], actions: [{ field: "depStation", kind: "setValue", value: "CIA" }] }),
       rule({ id: "c", conditions: [{ field: "depStation", op: "equals", value: "CIA" }], actions: [{ field: "depTerminal", kind: "setValue", value: "T2" }] }),
@@ -124,6 +136,42 @@ describe("actions", () => {
     expect(legField(out[0], "depStation")).toBe("CIA");
     expect(legField(out[0], "depTerminal")).toBe("T2"); // rule c saw rule b's output
     expect(changes.map((c) => c.ruleId)).toEqual(["b", "c"]);
+  });
+});
+
+describe("header rules", () => {
+  it("updates the airline designator on the header record", () => {
+    const { headers: out, changes } = applyRules(legs(), headers(), [
+      headerRule({
+        conditions: [{ field: "airline", op: "equals", value: "XX" }],
+        actions: [{ field: "airline", kind: "setValue", value: "ABC" }],
+      }),
+    ]);
+    expect(headerField(out[0], "airline")).toBe("ABC");
+    expect(changes).toEqual([
+      expect.objectContaining({ target: "header", field: "airline", before: "XX", after: "ABC" }),
+    ]);
+  });
+
+  it("never touches leg data", () => {
+    const inputLegs = legs();
+    const before = inputLegs.map((l) => legField(l, "airline"));
+    const { legs: outLegs } = applyRules(inputLegs, headers(), [
+      headerRule({
+        conditions: [{ field: "airline", op: "equals", value: "XX" }],
+        actions: [{ field: "airline", kind: "setValue", value: "ABC" }],
+      }),
+    ]);
+    expect(outLegs.map((l) => legField(l, "airline"))).toEqual(before);
+  });
+
+  it("leg rules never touch header data", () => {
+    const { headers: out } = applyRules(
+      legs(),
+      headers(),
+      [rule({ actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }] })],
+    );
+    expect(headerField(out[0], "airline")).toBe("XX"); // untouched
   });
 });
 

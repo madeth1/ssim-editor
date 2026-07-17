@@ -13,7 +13,7 @@ import { RuleEditor } from "@/components/RuleEditor";
 import { pickAndReadJson, saveJsonAs } from "@/lib/file-io";
 import { parseRulesJson } from "@/rules/storage";
 import type { Rule } from "@/rules/types";
-import { LEG_FIELDS } from "@/ssim/types";
+import { fieldSpec, type RecordTarget } from "@/ssim/types";
 
 function summarize(rule: Rule): string {
   const OP_TEXT: Partial<Record<string, string>> = {
@@ -26,19 +26,112 @@ function summarize(rule: Rule): string {
     .map((c) =>
       c.op === "inDateRange"
         ? `period ∩ ${c.value}`
-        : `${LEG_FIELDS[c.field].label} ${OP_TEXT[c.op] ?? ""} ${c.value}`.trim(),
+        : `${fieldSpec(rule.target, c.field).label} ${OP_TEXT[c.op] ?? ""} ${c.value}`.trim(),
     )
     .join(" · ");
-  return conds || "⚠ modifies all legs";
+  return conds || `⚠ modifies all ${rule.target === "header" ? "carrier headers" : "legs"}`;
 }
 
-const newRule = (): Rule => ({
-  id: crypto.randomUUID(),
-  name: "",
-  enabled: true,
-  conditions: [{ field: "depStation", op: "equals", value: "" }],
-  actions: [],
-});
+const newRule = (target: RecordTarget = "leg"): Rule =>
+  target === "header"
+    ? {
+        id: crypto.randomUUID(),
+        name: "",
+        enabled: true,
+        target: "header",
+        conditions: [{ field: "airline", op: "equals", value: "" }],
+        actions: [],
+      }
+    : {
+        id: crypto.randomUUID(),
+        name: "",
+        enabled: true,
+        target: "leg",
+        conditions: [{ field: "depStation", op: "equals", value: "" }],
+        actions: [],
+      };
+
+function RuleGroup({
+  title,
+  rules,
+  onMove,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  title: string;
+  rules: Rule[];
+  onMove: (i: number, dir: -1 | 1) => void;
+  onToggle: (rule: Rule, enabled: boolean) => void;
+  onEdit: (rule: Rule) => void;
+  onDelete: (rule: Rule) => void;
+}) {
+  if (rules.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <h3 className="px-1 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">
+        {title}
+      </h3>
+      <ul className="flex flex-col gap-1.5">
+        {rules.map((rule, i) => (
+          <li
+            key={rule.id}
+            className="group rounded-lg border bg-card px-2.5 py-2"
+          >
+            <div className="flex items-center gap-2">
+              <Switch
+                size="sm"
+                checked={rule.enabled}
+                onCheckedChange={(enabled) => onToggle(rule, enabled)}
+                aria-label={`Enable ${rule.name}`}
+              />
+              <button
+                className="min-w-0 flex-1 cursor-pointer text-left"
+                onClick={() => onEdit(rule)}
+              >
+                <span className="block truncate text-sm font-medium">
+                  {rule.name}
+                </span>
+                <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                  {summarize(rule)}
+                </span>
+              </button>
+              <div className="flex flex-col opacity-0 transition-opacity group-hover:opacity-100">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={i === 0}
+                  onClick={() => onMove(i, -1)}
+                  aria-label="Move rule up"
+                >
+                  <ChevronUp />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  disabled={i === rules.length - 1}
+                  onClick={() => onMove(i, 1)}
+                  aria-label="Move rule down"
+                >
+                  <ChevronDown />
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="opacity-0 transition-opacity group-hover:opacity-100"
+                onClick={() => onDelete(rule)}
+                aria-label="Delete rule"
+              >
+                <Trash2 />
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export function RulesPanel({
   rules,
@@ -51,10 +144,27 @@ export function RulesPanel({
 }) {
   const [editing, setEditing] = useState<Rule | null>(null);
 
-  const move = (i: number, dir: -1 | 1) => {
+  const legRules = rules.filter((r) => r.target === "leg");
+  const headerRules = rules.filter((r) => r.target === "header");
+
+  const toggle = (rule: Rule, enabled: boolean) =>
+    onChange(rules.map((r) => (r.id === rule.id ? { ...r, enabled } : r)));
+
+  const remove = (rule: Rule) =>
+    onChange(rules.filter((r) => r.id !== rule.id));
+
+  // Reorders within a target group only — groups never interact at
+  // execution time, so cross-group order carries no meaning.
+  const move = (target: RecordTarget, groupIndex: number, dir: -1 | 1) => {
+    const indices = rules.reduce<number[]>(
+      (acc, r, i) => (r.target === target ? [...acc, i] : acc),
+      [],
+    );
+    const a = indices[groupIndex];
+    const b = indices[groupIndex + dir];
+    if (a === undefined || b === undefined) return;
     const next = [...rules];
-    const [r] = next.splice(i, 1);
-    next.splice(i + dir, 0, r);
+    [next[a], next[b]] = [next[b], next[a]];
     onChange(next);
   };
 
@@ -100,76 +210,29 @@ export function RulesPanel({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-2">
         {rules.length === 0 && (
           <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            No rules yet. Rules run top to bottom on every flight leg — changes
-            preview instantly in the table.
+            No rules yet. Rules run top to bottom within each record type —
+            changes preview instantly in the table.
           </p>
         )}
-        <ul className="flex flex-col gap-1.5">
-          {rules.map((rule, i) => (
-            <li
-              key={rule.id}
-              className="group rounded-lg border bg-card px-2.5 py-2"
-            >
-              <div className="flex items-center gap-2">
-                <Switch
-                  size="sm"
-                  checked={rule.enabled}
-                  onCheckedChange={(enabled) =>
-                    onChange(
-                      rules.map((r) =>
-                        r.id === rule.id ? { ...r, enabled } : r,
-                      ),
-                    )
-                  }
-                  aria-label={`Enable ${rule.name}`}
-                />
-                <button
-                  className="min-w-0 flex-1 cursor-pointer text-left"
-                  onClick={() => setEditing(rule)}
-                >
-                  <span className="block truncate text-sm font-medium">
-                    {rule.name}
-                  </span>
-                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
-                    {summarize(rule)}
-                  </span>
-                </button>
-                <div className="flex flex-col opacity-0 transition-opacity group-hover:opacity-100">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    disabled={i === 0}
-                    onClick={() => move(i, -1)}
-                    aria-label="Move rule up"
-                  >
-                    <ChevronUp />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    disabled={i === rules.length - 1}
-                    onClick={() => move(i, 1)}
-                    aria-label="Move rule down"
-                  >
-                    <ChevronDown />
-                  </Button>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="opacity-0 transition-opacity group-hover:opacity-100"
-                  onClick={() => onChange(rules.filter((r) => r.id !== rule.id))}
-                  aria-label="Delete rule"
-                >
-                  <Trash2 />
-                </Button>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <RuleGroup
+          title="Flight Leg Record"
+          rules={legRules}
+          onMove={(i, dir) => move("leg", i, dir)}
+          onToggle={toggle}
+          onEdit={setEditing}
+          onDelete={remove}
+        />
+        <RuleGroup
+          title="Carrier Record"
+          rules={headerRules}
+          onMove={(i, dir) => move("header", i, dir)}
+          onToggle={toggle}
+          onEdit={setEditing}
+          onDelete={remove}
+        />
       </div>
 
       <div className="border-t p-2">

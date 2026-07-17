@@ -1,5 +1,12 @@
 // Builds realistic SSIM lines for tests and the sample fixture file.
-import { type LegField, LEG_FIELDS, padField } from "./types";
+import {
+  type HeaderField,
+  type LegField,
+  HEADER_FIELDS,
+  LEG_FIELDS,
+  padField,
+  padHeaderField,
+} from "./types";
 
 const pad200 = (s: string) => s.padEnd(200);
 
@@ -13,6 +20,19 @@ export function makeLegLine(
     line = line.slice(0, start) + padField(field, value) + line.slice(start + len);
   }
   return line.slice(0, 194) + String(serial).padStart(6, "0");
+}
+
+export function makeHeaderLine(values: Partial<Record<HeaderField, string>>): string {
+  let line = pad200("2");
+  for (const [field, value] of Object.entries(values) as [
+    HeaderField,
+    string,
+  ][]) {
+    const { start, len } = HEADER_FIELDS[field];
+    line =
+      line.slice(0, start) + padHeaderField(field, value) + line.slice(start + len);
+  }
+  return line;
 }
 
 export const DEFAULT_LEG: Partial<Record<LegField, string>> = {

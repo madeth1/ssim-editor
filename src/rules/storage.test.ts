@@ -43,4 +43,34 @@ describe("parseRulesJson", () => {
       parseRulesJson('[{"actions": [{"field": "depStation", "kind": "setValue", "value": "CIA"}]}]'),
     ).toThrow(/invalid action/);
   });
+
+  it("defaults missing target to leg (back-compat)", () => {
+    const [r] = parseRulesJson('[{"conditions": [], "actions": []}]');
+    expect(r.target).toBe("leg");
+  });
+
+  it("accepts a valid header rule", () => {
+    const [r] = parseRulesJson(
+      '[{"target": "header", "conditions": [{"field": "airline", "op": "equals", "value": "UXX"}], "actions": [{"field": "airline", "kind": "setValue", "value": "ABC"}]}]',
+    );
+    expect(r.target).toBe("header");
+    expect(r.conditions).toHaveLength(1);
+    expect(r.actions).toHaveLength(1);
+  });
+
+  it("rejects a header rule using a leg-only field", () => {
+    expect(() =>
+      parseRulesJson(
+        '[{"target": "header", "conditions": [{"field": "depStation", "op": "equals", "value": "FCO"}], "actions": []}]',
+      ),
+    ).toThrow(/invalid condition/);
+  });
+
+  it("rejects a header rule using a leg-only op", () => {
+    expect(() =>
+      parseRulesJson(
+        '[{"target": "header", "conditions": [{"field": "airline", "op": "inDateRange", "value": "01JAN26-31MAR26"}], "actions": []}]',
+      ),
+    ).toThrow(/invalid condition/);
+  });
 });

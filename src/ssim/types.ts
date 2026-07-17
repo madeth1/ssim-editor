@@ -38,12 +38,48 @@ export interface FlightLeg {
   values?: Partial<Record<LegField, string>>;
 }
 
+// Type 2 (carrier header) column layout. Byte 1 is Time Mode ("U"/"L",
+// unmodeled — must not be touched by the airline field's column range).
+// Only the airline designator is modeled — other known offsets (airline
+// numeric code, season, validity period, creation date) are intentionally
+// unmodeled until something needs to read or edit them.
+export const HEADER_FIELDS = {
+  airline: { start: 2, len: 3, label: "Airline" },
+} as const;
+
+export type HeaderField = keyof typeof HEADER_FIELDS;
+
+export const HEADER_FIELD_NAMES = Object.keys(HEADER_FIELDS) as HeaderField[];
+
+export interface HeaderRecord {
+  /** index into SsimFile.lines */
+  lineIndex: number;
+  raw: string;
+  /** only rule-modified fields; absent on freshly parsed headers */
+  values?: Partial<Record<HeaderField, string>>;
+}
+
+export type RecordTarget = "leg" | "header";
+
+function readField(
+  raw: string,
+  values: Partial<Record<string, string>> | undefined,
+  spec: { start: number; len: number },
+  field: string,
+): string {
+  const v = values?.[field];
+  if (v !== undefined) return v;
+  return raw.slice(spec.start, spec.start + spec.len).trim();
+}
+
 /** Trimmed field value: rule override if present, else sliced from the raw line. */
 export function legField(leg: FlightLeg, field: LegField): string {
-  const v = leg.values?.[field];
-  if (v !== undefined) return v;
-  const { start, len } = LEG_FIELDS[field];
-  return leg.raw.slice(start, start + len).trim();
+  return readField(leg.raw, leg.values, LEG_FIELDS[field], field);
+}
+
+/** Trimmed field value: rule override if present, else sliced from the raw line. */
+export function headerField(header: HeaderRecord, field: HeaderField): string {
+  return readField(header.raw, header.values, HEADER_FIELDS[field], field);
 }
 
 export interface SsimFile {
@@ -52,17 +88,34 @@ export interface SsimFile {
   eol: "\n" | "\r\n";
   trailingNewline: boolean;
   legs: FlightLeg[];
+  headers: HeaderRecord[];
 }
 
-/** Pad a trimmed value back to its fixed column width. Throws if it doesn't fit. */
-export function padField(field: LegField, value: string): string {
-  const spec = LEG_FIELDS[field];
+function padToSpec(
+  spec: { len: number; label: string; rightJustified?: boolean },
+  value: string,
+): string {
   if (value.length > spec.len) {
     throw new Error(
       `Value "${value}" is too long for ${spec.label} (max ${spec.len} chars)`,
     );
   }
-  return "rightJustified" in spec && spec.rightJustified
-    ? value.padStart(spec.len)
-    : value.padEnd(spec.len);
+  return spec.rightJustified ? value.padStart(spec.len) : value.padEnd(spec.len);
+}
+
+/** Pad a trimmed value back to its fixed column width. Throws if it doesn't fit. */
+export function padField(field: LegField, value: string): string {
+  return padToSpec(LEG_FIELDS[field], value);
+}
+
+/** Pad a trimmed value back to its fixed column width. Throws if it doesn't fit. */
+export function padHeaderField(field: HeaderField, value: string): string {
+  return padToSpec(HEADER_FIELDS[field], value);
+}
+
+/** Field spec for either record kind, keyed by a rule's target. */
+export function fieldSpec(target: RecordTarget, field: LegField | HeaderField) {
+  return target === "header"
+    ? HEADER_FIELDS[field as HeaderField]
+    : LEG_FIELDS[field as LegField];
 }

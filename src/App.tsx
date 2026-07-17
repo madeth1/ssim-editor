@@ -11,7 +11,14 @@ import { checkForUpdates } from "@/lib/update";
 import { applyRules } from "@/rules/engine";
 import { loadRules, saveRules } from "@/rules/storage";
 import type { Change, Rule } from "@/rules/types";
-import { LEG_FIELDS, legField, type FlightLeg, type SsimFile } from "@/ssim/types";
+import {
+  fieldSpec,
+  headerField,
+  legField,
+  type FlightLeg,
+  type HeaderRecord,
+  type SsimFile,
+} from "@/ssim/types";
 import { parseSsim } from "@/ssim/parse";
 import { serializeSsim } from "@/ssim/serialize";
 
@@ -20,12 +27,16 @@ const DRAWER_BATCH = 200;
 function ChangesDrawer({
   applied,
 }: {
-  applied: { legs: FlightLeg[]; changes: Change[] };
+  applied: { legs: FlightLeg[]; headers: HeaderRecord[]; changes: Change[] };
 }) {
   const [visible, setVisible] = useState(DRAWER_BATCH);
   const legByLine = useMemo(
     () => new Map(applied.legs.map((l) => [l.lineIndex, l])),
     [applied.legs],
+  );
+  const headerByLine = useMemo(
+    () => new Map(applied.headers.map((h) => [h.lineIndex, h])),
+    [applied.headers],
   );
   const remaining = applied.changes.length - visible;
 
@@ -44,14 +55,15 @@ function ChangesDrawer({
         </thead>
         <tbody>
           {applied.changes.slice(0, visible).map((c, i) => {
-            const leg = legByLine.get(c.lineIndex);
+            const leg = c.target === "leg" ? legByLine.get(c.lineIndex) : undefined;
+            const header = c.target === "header" ? headerByLine.get(c.lineIndex) : undefined;
             return (
               <tr key={i} className="border-t border-border/50">
                 <td className="px-4 py-1">
-                  {leg && legField(leg, "airline")}{" "}
-                  {leg && legField(leg, "flightNumber")}
+                  {leg && `${legField(leg, "airline")} ${legField(leg, "flightNumber")}`}
+                  {header && `Carrier header (${headerField(header, "airline")})`}
                 </td>
-                <td className="px-2 py-1">{LEG_FIELDS[c.field].label}</td>
+                <td className="px-2 py-1">{fieldSpec(c.target, c.field).label}</td>
                 <td className="px-2 py-1 text-muted-foreground line-through">
                   {c.before || "(blank)"}
                 </td>
@@ -117,6 +129,7 @@ function App() {
           id: "demo",
           name: "FCO departures on 32Q",
           enabled: true,
+          target: "leg",
           conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
           actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }],
         },
@@ -124,6 +137,7 @@ function App() {
           id: "demo2",
           name: "Add K restriction where none",
           enabled: true,
+          target: "leg",
           conditions: [
             { field: "trafficRestriction", op: "isBlank", value: "" },
           ],
@@ -137,7 +151,7 @@ function App() {
 
   // Live preview: rules re-run on every change; original file is never touched.
   const applied = useMemo(
-    () => (file ? applyRules(file.legs, rules) : null),
+    () => (file ? applyRules(file.legs, file.headers, rules) : null),
     [file, rules],
   );
 
@@ -197,7 +211,7 @@ function App() {
   const exportFile = async () => {
     if (!file || !applied) return;
     try {
-      const text = serializeSsim(file, applied.legs);
+      const text = serializeSsim(file, applied.legs, applied.headers);
       const path = await saveSsimAs(text, filePath);
       if (path)
         setStatus({

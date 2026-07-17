@@ -16,11 +16,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { LEG_FIELDS } from "@/ssim/types";
+import {
+  fieldSpec,
+  HEADER_FIELDS,
+  LEG_FIELDS,
+  type HeaderField,
+  type LegField,
+  type RecordTarget,
+} from "@/ssim/types";
 import { loadPresets, savePresets, type Preset } from "@/rules/presets";
 import {
-  ACTION_FIELDS,
-  CONDITION_FIELDS,
+  HEADER_ACTION_FIELDS,
+  HEADER_CONDITION_FIELDS,
+  HEADER_CONDITION_OPS,
+  LEG_ACTION_FIELDS,
+  LEG_CONDITION_FIELDS,
   type ActionKind,
   type Condition,
   type ConditionOp,
@@ -28,11 +38,33 @@ import {
   type RuleAction,
 } from "@/rules/types";
 
-const toOptions = (fields: typeof CONDITION_FIELDS) =>
-  fields.map((f) => ({ value: f, label: LEG_FIELDS[f].label }));
+const toOptions = <F extends string>(
+  fields: F[],
+  specs: Record<F, { label: string }>,
+) => fields.map((f) => ({ value: f, label: specs[f].label }));
 
-const CONDITION_FIELD_OPTIONS = toOptions(CONDITION_FIELDS);
-const ACTION_FIELD_OPTIONS = toOptions(ACTION_FIELDS);
+const TARGET_OPTIONS: { value: RecordTarget; label: string }[] = [
+  { value: "leg", label: "Flight legs (Type 3)" },
+  { value: "header", label: "Carrier header (Type 2)" },
+];
+
+function switchTarget(rule: Rule, target: RecordTarget): Rule {
+  if (rule.target === target) return rule;
+  const base = { id: rule.id, name: rule.name, enabled: rule.enabled };
+  return target === "header"
+    ? {
+        ...base,
+        target: "header",
+        conditions: [{ field: "airline", op: "equals", value: "" }],
+        actions: [],
+      }
+    : {
+        ...base,
+        target: "leg",
+        conditions: [{ field: "depStation", op: "equals", value: "" }],
+        actions: [],
+      };
+}
 
 const OP_OPTIONS: { value: ConditionOp; label: string }[] = [
   { value: "equals", label: "is" },
@@ -240,7 +272,7 @@ function validate(rule: Rule): string | null {
   }
   for (const a of rule.actions) {
     if (a.kind === "setValue") {
-      const spec = LEG_FIELDS[a.field];
+      const spec = fieldSpec(rule.target, a.field);
       if (a.value.trim().length > spec.len)
         return `"${a.value.trim()}" doesn't fit ${spec.label} (max ${spec.len} chars).`;
     }
@@ -275,16 +307,32 @@ export function RuleEditor({
     field === "trafficRestriction" &&
     ["equals", "notEquals", "setValue"].includes(opOrKind);
 
-  const setCondition = (i: number, patch: Partial<Condition>) =>
+  // Field/op validity per target is enforced by the option lists the pickers
+  // offer below, so a same-shape cast here is safe — TS can't otherwise
+  // narrow a patch's field type against a union-typed `r` inside .map().
+  const setCondition = (i: number, patch: Partial<Condition<LegField | HeaderField>>) =>
     setRule((r) => ({
       ...r,
       conditions: r.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)),
-    }));
-  const setAction = (i: number, patch: Partial<RuleAction>) =>
+    }) as Rule);
+  const setAction = (i: number, patch: Partial<RuleAction<LegField | HeaderField>>) =>
     setRule((r) => ({
       ...r,
       actions: r.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)),
-    }));
+    }) as Rule);
+
+  const conditionFieldOptions =
+    rule.target === "header"
+      ? toOptions(HEADER_CONDITION_FIELDS, HEADER_FIELDS)
+      : toOptions(LEG_CONDITION_FIELDS, LEG_FIELDS);
+  const actionFieldOptions =
+    rule.target === "header"
+      ? toOptions(HEADER_ACTION_FIELDS, HEADER_FIELDS)
+      : toOptions(LEG_ACTION_FIELDS, LEG_FIELDS);
+  const opOptions =
+    rule.target === "header"
+      ? OP_OPTIONS.filter((o) => HEADER_CONDITION_OPS.includes(o.value))
+      : OP_OPTIONS;
 
   const save = () => {
     const problem = validate(rule);
@@ -309,6 +357,16 @@ export function RuleEditor({
             autoFocus
           />
 
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">Applies to</span>
+            <Picker
+              value={rule.target}
+              onChange={(target) => setRule((r) => switchTarget(r, target))}
+              options={TARGET_OPTIONS}
+              className="w-56"
+            />
+          </div>
+
           <section className="flex flex-col gap-2">
             <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
               If every condition matches
@@ -330,14 +388,14 @@ export function RuleEditor({
                   <Picker
                     value={c.field}
                     onChange={(field) => setCondition(i, { field })}
-                    options={CONDITION_FIELD_OPTIONS}
+                    options={conditionFieldOptions}
                     className="w-40 shrink-0"
                   />
                 )}
                 <Picker
                   value={c.op}
                   onChange={(op) => setCondition(i, { op, value: "" })}
-                  options={OP_OPTIONS}
+                  options={opOptions}
                   className="w-36 shrink-0"
                 />
                 {VALUELESS_OPS.includes(c.op) ? (
@@ -372,7 +430,7 @@ export function RuleEditor({
                     setRule((r) => ({
                       ...r,
                       conditions: r.conditions.filter((_, j) => j !== i),
-                    }))
+                    }) as Rule)
                   }
                 >
                   <Trash2 />
@@ -388,9 +446,11 @@ export function RuleEditor({
                   ...r,
                   conditions: [
                     ...r.conditions,
-                    { field: "depStation", op: "equals", value: "" },
+                    r.target === "header"
+                      ? { field: "airline", op: "equals", value: "" }
+                      : { field: "depStation", op: "equals", value: "" },
                   ],
-                }))
+                }) as Rule)
               }
             >
               <Plus /> Add condition
@@ -406,7 +466,7 @@ export function RuleEditor({
                 <Picker
                   value={a.field}
                   onChange={(field) => setAction(i, { field })}
-                  options={ACTION_FIELD_OPTIONS}
+                  options={actionFieldOptions}
                   className="w-40 shrink-0"
                 />
                 <Picker
@@ -438,7 +498,7 @@ export function RuleEditor({
                     setRule((r) => ({
                       ...r,
                       actions: r.actions.filter((_, j) => j !== i),
-                    }))
+                    }) as Rule)
                   }
                 >
                   <Trash2 />
@@ -454,9 +514,11 @@ export function RuleEditor({
                   ...r,
                   actions: [
                     ...r.actions,
-                    { field: "aircraftType", kind: "setValue", value: "" },
+                    r.target === "header"
+                      ? { field: "airline", kind: "setValue", value: "" }
+                      : { field: "aircraftType", kind: "setValue", value: "" },
                   ],
-                }))
+                }) as Rule)
               }
             >
               <Plus /> Add action
