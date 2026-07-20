@@ -6,6 +6,8 @@ import {
   type SsimFile,
   HEADER_FIELDS,
   LEG_FIELDS,
+  MAX_OFF_POINTS,
+  legField,
   offPointIndex,
   padField,
   padHeaderField,
@@ -16,23 +18,24 @@ import {
  *
  * `slotOf` narrows a field to the sub-range actually being written. Positional
  * fields (traffic restriction) occupy one byte per off point, so only that leg's
- * own byte is replaced — codes belonging to other segments stay untouched.
+ * own byte is replaced — codes belonging to other segments stay untouched. It
+ * throws when the record has no slot for the value; an unwritable change must
+ * fail the export rather than vanish from it.
  */
 function patchLine<F extends string>(
   raw: string,
   values: Partial<Record<F, string>> | undefined,
   specs: Record<F, { start: number; len: number; positional?: boolean }>,
   pad: (field: F, value: string) => string,
-  slotOf?: (field: F) => number | null,
+  slotOf?: (field: F) => number,
 ): string {
   let line = raw;
   for (const [field, value] of Object.entries(values ?? {}) as [F, string][]) {
     const spec = specs[field];
     let { start, len } = spec;
     if (spec.positional) {
-      const slot = slotOf?.(field) ?? null;
-      if (slot === null) continue; // unplaceable — engine surfaces this as a warning
-      start += slot;
+      if (!slotOf) throw new Error(`no slot resolver for positional field ${field}`);
+      start += slotOf(field);
       len = 1;
     }
     if (line.slice(start, start + len).trim() === value) continue; // untouched
@@ -42,9 +45,14 @@ function patchLine<F extends string>(
 }
 
 export function patchLegLine(leg: FlightLeg): string {
-  return patchLine<LegField>(leg.raw, leg.values, LEG_FIELDS, padField, () =>
-    offPointIndex(leg),
-  );
+  return patchLine<LegField>(leg.raw, leg.values, LEG_FIELDS, padField, (field) => {
+    const slot = offPointIndex(leg);
+    if (slot === null)
+      throw new Error(
+        `${LEG_FIELDS[field].label} can't be placed on leg ${legField(leg, "legSequence")} (line ${leg.lineIndex + 1}) — only legs 1-${MAX_OFF_POINTS} have a slot`,
+      );
+    return slot;
+  });
 }
 
 export function patchHeaderLine(header: HeaderRecord): string {

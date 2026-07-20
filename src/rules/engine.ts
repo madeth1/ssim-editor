@@ -136,7 +136,7 @@ export function applyRules(
           spec.positional &&
           offPointIndex(leg) === null
         ) {
-          warning = `${spec.label} can't be placed on leg ${legField(leg, "legSequence")} — only legs 1-${MAX_OFF_POINTS} have a slot; this change won't be exported`;
+          warning = `${spec.label} can't be placed on leg ${legField(leg, "legSequence")} — only legs 1-${MAX_OFF_POINTS} have a slot; fix before exporting`;
         }
         leg = { ...leg, values: { ...leg.values, [action.field]: after } };
         legChanges.push({

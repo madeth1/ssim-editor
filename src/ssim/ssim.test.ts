@@ -100,10 +100,13 @@ describe("traffic restriction is positional", () => {
     expect(() => setRestriction(parseSsim(handBuiltLeg("01")), "KA")).toThrow(/too long/);
   });
 
-  it("does not write when the leg has no slot (12+ leg flights)", () => {
+  // The field holds 11 off points, so a 12th leg has nowhere to put its code.
+  // Export must fail rather than drop the change silently — the engine warns
+  // about this at preview time so it can be fixed before we get here.
+  it("refuses to export when the leg has no slot (12+ leg flights)", () => {
     const raw = handBuiltLeg("12");
     expect(legField(parseSsim(raw).legs[0], "trafficRestriction")).toBe("");
-    expect(setRestriction(parseSsim(raw), "K")).toBe(raw); // unchanged
+    expect(() => setRestriction(parseSsim(raw), "K")).toThrow(/only legs 1-11/);
   });
 
   // SSIM Ch.2, Chapter 7 Application Example 1: LHR-FCO-THR-DEL-BKK
