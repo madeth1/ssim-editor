@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
 import { headerField, legField } from "../ssim/types";
-import { makeSampleSsim } from "../ssim/fixture";
+import { DEFAULT_LEG, makeLegLine, makeSampleSsim } from "../ssim/fixture";
 import { applyRules, parseSsimDate } from "./engine";
 import type { HeaderRule, LegRule, Rule } from "./types";
 
@@ -101,6 +101,26 @@ describe("actions", () => {
     expect(changes).toHaveLength(3);
     expect(legField(out[0], "trafficRestriction")).toBe("B"); // was blank
     expect(legField(out[3], "trafficRestriction")).toBe("A"); // YY leg untouched
+  });
+
+  it("warns when a restriction has no off-point slot (12+ leg flight)", () => {
+    const leg = { lineIndex: 0, raw: makeLegLine({ ...DEFAULT_LEG, legSequence: "12" }) };
+    const { changes } = applyRules([leg], [], [
+      rule({
+        actions: [{ field: "trafficRestriction", kind: "setValue", value: "K" }],
+      }),
+    ]);
+    expect(changes).toHaveLength(1);
+    expect(changes[0].warning).toMatch(/can't be placed on leg 12/);
+  });
+
+  it("warns when a restriction code is longer than one character", () => {
+    const { changes } = applyRules(legs(), headers(), [
+      rule({
+        actions: [{ field: "trafficRestriction", kind: "setValue", value: "KA" }],
+      }),
+    ]);
+    expect(changes[0].warning).toMatch(/max 1 chars/);
   });
 
   it("changes equipment 319 -> 320 without touching adjacent booking classes", () => {

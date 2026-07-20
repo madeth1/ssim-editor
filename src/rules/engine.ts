@@ -1,8 +1,11 @@
 import {
   HEADER_FIELDS,
   LEG_FIELDS,
+  MAX_OFF_POINTS,
+  fieldMaxLength,
   headerField,
   legField,
+  offPointIndex,
   type FlightLeg,
   type HeaderField,
   type HeaderRecord,
@@ -121,10 +124,20 @@ export function applyRules(
         if (after === before) continue;
         // surface overflow at preview time; export would throw in padField
         const spec = LEG_FIELDS[action.field];
-        const warning =
-          after.length > spec.len
-            ? `"${after}" doesn't fit ${spec.label} (max ${spec.len} chars) — fix before exporting`
+        const max = fieldMaxLength(spec);
+        let warning =
+          after.length > max
+            ? `"${after}" doesn't fit ${spec.label} (max ${max} chars) — fix before exporting`
             : undefined;
+        // a positional value needs a slot to live in; without one it can't be written
+        if (
+          !warning &&
+          "positional" in spec &&
+          spec.positional &&
+          offPointIndex(leg) === null
+        ) {
+          warning = `${spec.label} can't be placed on leg ${legField(leg, "legSequence")} — only legs 1-${MAX_OFF_POINTS} have a slot; this change won't be exported`;
+        }
         leg = { ...leg, values: { ...leg.values, [action.field]: after } };
         legChanges.push({
           target: "leg",

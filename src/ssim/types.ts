@@ -22,7 +22,20 @@ export const LEG_FIELDS = {
   arrTerminal: { start: 70, len: 2, label: "Arr terminal" },
   aircraftType: { start: 72, len: 3, label: "Equipment" },
   prbd: { start: 75, len: 20, label: "Booking classes (PRBD)" },
-  trafficRestriction: { start: 148, len: 12, label: "Traffic restriction" },
+  // Spec: 1-based 150-160. Byte 149 is a separate field and 161 is the leg
+  // overflow indicator — neither belongs to this range.
+  //
+  // Positional: each of the 11 bytes is a separate one-character code naming a
+  // different airport. Byte 150 is the routing's 1st off point, 151 the 2nd, and
+  // so on, so a leg's own code sits at legSequence - 1. Read and written one byte
+  // at a time; codes at other off points belong to other segments and are left
+  // alone. See offPointIndex().
+  trafficRestriction: {
+    start: 149,
+    len: 11,
+    label: "Traffic restriction",
+    positional: true,
+  },
   salesConfig: { start: 172, len: 20, label: "Sales config (ACV)" },
 } as const;
 
@@ -72,9 +85,40 @@ function readField(
   return raw.slice(spec.start, spec.start + spec.len).trim();
 }
 
+/** Highest leg sequence a positional field can address (11 bytes, 150-160). */
+export const MAX_OFF_POINTS = 11;
+
+/**
+ * 0-based slot for this leg's own off point within a positional field.
+ * Null when the leg sequence is missing, malformed, or past the 11 the field
+ * holds — the spec routes 12+ leg flights through the byte-161 overflow
+ * indicator and a Type 4 record, which this app does not write.
+ */
+export function offPointIndex(leg: FlightLeg): number | null {
+  const seq = Number(legField(leg, "legSequence"));
+  if (!Number.isInteger(seq) || seq < 1 || seq > MAX_OFF_POINTS) return null;
+  return seq - 1;
+}
+
+/** Max length of a single value: one character per slot for positional fields. */
+export function fieldMaxLength(spec: {
+  len: number;
+  positional?: boolean;
+}): number {
+  return spec.positional ? 1 : spec.len;
+}
+
 /** Trimmed field value: rule override if present, else sliced from the raw line. */
 export function legField(leg: FlightLeg, field: LegField): string {
-  return readField(leg.raw, leg.values, LEG_FIELDS[field], field);
+  const spec = LEG_FIELDS[field];
+  if ("positional" in spec && spec.positional) {
+    const v = leg.values?.[field];
+    if (v !== undefined) return v;
+    const i = offPointIndex(leg);
+    if (i === null) return "";
+    return (leg.raw[spec.start + i] ?? "").trim();
+  }
+  return readField(leg.raw, leg.values, spec, field);
 }
 
 /** Trimmed field value: rule override if present, else sliced from the raw line. */
@@ -92,15 +136,22 @@ export interface SsimFile {
 }
 
 function padToSpec(
-  spec: { len: number; label: string; rightJustified?: boolean },
+  spec: {
+    len: number;
+    label: string;
+    rightJustified?: boolean;
+    positional?: boolean;
+  },
   value: string,
 ): string {
-  if (value.length > spec.len) {
+  const max = fieldMaxLength(spec);
+  if (value.length > max) {
     throw new Error(
-      `Value "${value}" is too long for ${spec.label} (max ${spec.len} chars)`,
+      `Value "${value}" is too long for ${spec.label} (max ${max} chars)`,
     );
   }
-  return spec.rightJustified ? value.padStart(spec.len) : value.padEnd(spec.len);
+  // a positional field is spliced one slot at a time, so pad to the slot
+  return spec.rightJustified ? value.padStart(max) : value.padEnd(max);
 }
 
 /** Pad a trimmed value back to its fixed column width. Throws if it doesn't fit. */

@@ -4,6 +4,7 @@ import {
   type LegField,
   HEADER_FIELDS,
   LEG_FIELDS,
+  MAX_OFF_POINTS,
   padField,
   padHeaderField,
 } from "./types";
@@ -15,8 +16,23 @@ export function makeLegLine(
   serial = 10,
 ): string {
   let line = pad200("3");
-  for (const [field, value] of Object.entries(values) as [LegField, string][]) {
-    const { start, len } = LEG_FIELDS[field];
+  // legSequence first: positional fields are placed relative to it
+  const ordered = (Object.entries(values) as [LegField, string][]).sort(
+    ([a], [b]) => Number(b === "legSequence") - Number(a === "legSequence"),
+  );
+  for (const [field, value] of ordered) {
+    const spec = LEG_FIELDS[field];
+    let { start, len } = spec;
+    if ("positional" in spec && spec.positional) {
+      const seq = Number(line.slice(LEG_FIELDS.legSequence.start, LEG_FIELDS.legSequence.start + 2));
+      if (!Number.isInteger(seq) || seq < 1 || seq > MAX_OFF_POINTS) {
+        throw new Error(
+          `Cannot place ${spec.label}: leg sequence must be 01-${MAX_OFF_POINTS}`,
+        );
+      }
+      start += seq - 1;
+      len = 1;
+    }
     line = line.slice(0, start) + padField(field, value) + line.slice(start + len);
   }
   return line.slice(0, 194) + String(serial).padStart(6, "0");

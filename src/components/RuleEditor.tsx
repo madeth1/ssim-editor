@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  fieldMaxLength,
   fieldSpec,
   HEADER_FIELDS,
   LEG_FIELDS,
@@ -245,7 +246,7 @@ function PresetManager({
               onChange={(e) => setCode(e.target.value)}
               placeholder="Code"
               className="h-7 w-20 font-mono text-sm"
-              maxLength={LEG_FIELDS.trafficRestriction.len}
+              maxLength={fieldMaxLength(LEG_FIELDS.trafficRestriction)}
             />
             <Input
               value={label}
@@ -273,8 +274,9 @@ function validate(rule: Rule): string | null {
   for (const a of rule.actions) {
     if (a.kind === "setValue") {
       const spec = fieldSpec(rule.target, a.field);
-      if (a.value.trim().length > spec.len)
-        return `"${a.value.trim()}" doesn't fit ${spec.label} (max ${spec.len} chars).`;
+      const max = fieldMaxLength(spec);
+      if (a.value.trim().length > max)
+        return `"${a.value.trim()}" doesn't fit ${spec.label} (max ${max} chars).`;
     }
     if (a.kind === "replaceText" && (!a.value.includes("=>") || !a.value.split("=>")[0]))
       return 'Replace text needs the form "old=>new" with a non-empty "old".';
