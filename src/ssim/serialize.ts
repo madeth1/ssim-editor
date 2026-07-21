@@ -1,3 +1,4 @@
+import type { SegmentRecord } from "./segment";
 import {
   type FlightLeg,
   type HeaderField,
@@ -64,22 +65,84 @@ export function patchHeaderLine(header: HeaderRecord): string {
   );
 }
 
+/** Record Serial Number, bytes 195-200 — on every record type. */
+const SERIAL = { start: 194, len: 6 };
+/** Serial Number Check Reference, bytes 188-193 — Type 5 trailer only. */
+const TRAILER_CHECK = { start: 187, len: 6 };
+
+const serialText = (n: number) => String(n).padStart(SERIAL.len, "0");
+
+const splice = (line: string, at: number, text: string) =>
+  line.slice(0, at) + text + line.slice(at + text.length);
+
+/**
+ * Rewrite every Record Serial Number so the sequence is unbroken after records
+ * have been inserted. Serials run sequentially across all record types; zero
+ * filler records (type "0") carry 000000 and sit outside the sequence.
+ *
+ * The Type 5 trailer additionally carries a check reference equal to the previous
+ * record's serial, i.e. one less than its own.
+ */
+function renumber(lines: string[]): string[] {
+  let serial = 0;
+  return lines.map((line, i) => {
+    if (line[0] === "0") return line;
+    // Skipping a short record would leave every later serial one too low with
+    // nothing to show for it — the same silent-corruption trap as a dropped
+    // traffic restriction. Fail the export instead.
+    if (line.length < SERIAL.start + SERIAL.len) {
+      throw new Error(
+        `Line ${i + 1} is ${line.length} characters — too short to hold a Record Serial Number (bytes ${SERIAL.start + 1}-${SERIAL.start + SERIAL.len}), so the file cannot be renumbered`,
+      );
+    }
+    serial++;
+    let out = splice(line, SERIAL.start, serialText(serial));
+    if (out[0] === "5") out = splice(out, TRAILER_CHECK.start, serialText(serial - 1));
+    return out;
+  });
+}
+
 /**
  * Serialize back to SSIM text. Lines whose legs/headers are unmodified — and
  * every other line — are emitted verbatim, so no-change round-trips are
  * byte-identical to the input.
+ *
+ * Adding segment records is the one thing that cannot preserve that: inserting a
+ * record shifts every serial after it, so the whole file is renumbered. Nothing
+ * is renumbered when no segment records are added.
  */
 export function serializeSsim(
   file: SsimFile,
   legs: FlightLeg[],
   headers: HeaderRecord[],
+  segments: SegmentRecord[] = [],
 ): string {
-  const lines = [...file.lines];
+  let lines = [...file.lines];
   for (const leg of legs) {
     if (leg.values) lines[leg.lineIndex] = patchLegLine(leg);
   }
   for (const header of headers) {
     if (header.values) lines[header.lineIndex] = patchHeaderLine(header);
   }
+
+  if (segments.length > 0) {
+    // group first so one pass builds the output — splicing in place would be
+    // quadratic on a file with tens of thousands of legs
+    const byLine = new Map<number, string[]>();
+    for (const segment of segments) {
+      if (segment.line === null) throw new Error(segment.error);
+      const at = byLine.get(segment.afterLineIndex);
+      if (at) at.push(segment.line);
+      else byLine.set(segment.afterLineIndex, [segment.line]);
+    }
+    const out: string[] = [];
+    lines.forEach((line, i) => {
+      out.push(line);
+      const added = byLine.get(i);
+      if (added) out.push(...added);
+    });
+    lines = renumber(out);
+  }
+
   return lines.join(file.eol) + (file.trailingNewline ? file.eol : "");
 }

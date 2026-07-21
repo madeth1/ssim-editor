@@ -21,9 +21,11 @@ import {
   fieldSpec,
   HEADER_FIELDS,
   LEG_FIELDS,
+  SEGMENT_FIELDS,
   type HeaderField,
   type LegField,
   type RecordTarget,
+  type SegmentField,
 } from "@/ssim/types";
 import { loadPresets, savePresets, type Preset } from "@/rules/presets";
 import {
@@ -32,6 +34,7 @@ import {
   HEADER_CONDITION_OPS,
   LEG_ACTION_FIELDS,
   LEG_CONDITION_FIELDS,
+  SEGMENT_ACTION_FIELDS,
   type ActionKind,
   type Condition,
   type ConditionOp,
@@ -47,24 +50,26 @@ const toOptions = <F extends string>(
 const TARGET_OPTIONS: { value: RecordTarget; label: string }[] = [
   { value: "leg", label: "Flight legs (Type 3)" },
   { value: "header", label: "Carrier header (Type 2)" },
+  { value: "segment", label: "Segment data (Type 4)" },
 ];
 
 function switchTarget(rule: Rule, target: RecordTarget): Rule {
   if (rule.target === target) return rule;
   const base = { id: rule.id, name: rule.name, enabled: rule.enabled };
-  return target === "header"
-    ? {
-        ...base,
-        target: "header",
-        conditions: [{ field: "airline", op: "equals", value: "" }],
-        actions: [],
-      }
-    : {
-        ...base,
-        target: "leg",
-        conditions: [{ field: "depStation", op: "equals", value: "" }],
-        actions: [],
-      };
+  if (target === "header")
+    return {
+      ...base,
+      target: "header",
+      conditions: [{ field: "airline", op: "equals", value: "" }],
+      actions: [],
+    };
+  // segment rules match legs — only the actions differ
+  return {
+    ...base,
+    target,
+    conditions: [{ field: "depStation", op: "equals", value: "" }],
+    actions: [],
+  };
 }
 
 const OP_OPTIONS: { value: ConditionOp; label: string }[] = [
@@ -317,7 +322,10 @@ export function RuleEditor({
       ...r,
       conditions: r.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)),
     }) as Rule);
-  const setAction = (i: number, patch: Partial<RuleAction<LegField | HeaderField>>) =>
+  const setAction = (
+    i: number,
+    patch: Partial<RuleAction<LegField | HeaderField | SegmentField>>,
+  ) =>
     setRule((r) => ({
       ...r,
       actions: r.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)),
@@ -330,11 +338,19 @@ export function RuleEditor({
   const actionFieldOptions =
     rule.target === "header"
       ? toOptions(HEADER_ACTION_FIELDS, HEADER_FIELDS)
-      : toOptions(LEG_ACTION_FIELDS, LEG_FIELDS);
+      : rule.target === "segment"
+        ? toOptions(SEGMENT_ACTION_FIELDS, SEGMENT_FIELDS)
+        : toOptions(LEG_ACTION_FIELDS, LEG_FIELDS);
   const opOptions =
     rule.target === "header"
       ? OP_OPTIONS.filter((o) => HEADER_CONDITION_OPS.includes(o.value))
       : OP_OPTIONS;
+  // a segment record doesn't exist until this rule creates it, so there is no
+  // prior text to replace — only setValue makes sense
+  const kindOptions =
+    rule.target === "segment"
+      ? KIND_OPTIONS.filter((o) => o.value === "setValue")
+      : KIND_OPTIONS;
 
   const save = () => {
     const problem = validate(rule);
@@ -376,8 +392,11 @@ export function RuleEditor({
             {rule.conditions.length === 0 && (
               <p className="flex items-center gap-1.5 pl-1 text-sm text-amber-700 dark:text-amber-400">
                 <TriangleAlert className="size-3.5 shrink-0" />
-                No conditions — this rule will modify every flight leg in the
-                file.
+                No conditions — this rule will{" "}
+                {rule.target === "segment"
+                  ? "add a record to every flight leg"
+                  : `modify every ${rule.target === "header" ? "carrier header" : "flight leg"}`}{" "}
+                in the file.
               </p>
             )}
             {rule.conditions.map((c, i) => (
@@ -474,7 +493,7 @@ export function RuleEditor({
                 <Picker
                   value={a.kind}
                   onChange={(kind) => setAction(i, { kind, value: "" })}
-                  options={KIND_OPTIONS}
+                  options={kindOptions}
                   className="w-36 shrink-0"
                 />
                 {usesPresets(a.field, a.kind) ? (
@@ -518,7 +537,9 @@ export function RuleEditor({
                     ...r.actions,
                     r.target === "header"
                       ? { field: "airline", kind: "setValue", value: "" }
-                      : { field: "aircraftType", kind: "setValue", value: "" },
+                      : r.target === "segment"
+                        ? { field: "eticket", kind: "setValue", value: "ET" }
+                        : { field: "aircraftType", kind: "setValue", value: "" },
                   ],
                 }) as Rule)
               }

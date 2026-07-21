@@ -22,34 +22,37 @@ function summarize(rule: Rule): string {
     isNotBlank: "is not blank",
     operatesOnDay: "on day",
   };
+  // a segment rule's conditions are leg conditions — it matches legs, and only
+  // differs in writing a new record rather than editing one
+  const conditionTarget = rule.target === "header" ? "header" : "leg";
   const conds = rule.conditions
     .map((c) =>
       c.op === "inDateRange"
         ? `period ∩ ${c.value}`
-        : `${fieldSpec(rule.target, c.field).label} ${OP_TEXT[c.op] ?? ""} ${c.value}`.trim(),
+        : `${fieldSpec(conditionTarget, c.field).label} ${OP_TEXT[c.op] ?? ""} ${c.value}`.trim(),
     )
     .join(" · ");
-  return conds || `⚠ modifies all ${rule.target === "header" ? "carrier headers" : "legs"}`;
+  if (conds) return conds;
+  if (rule.target === "segment") return "⚠ adds a record to all legs";
+  return `⚠ modifies all ${rule.target === "header" ? "carrier headers" : "legs"}`;
 }
 
-const newRule = (target: RecordTarget = "leg"): Rule =>
-  target === "header"
-    ? {
-        id: crypto.randomUUID(),
-        name: "",
-        enabled: true,
-        target: "header",
-        conditions: [{ field: "airline", op: "equals", value: "" }],
-        actions: [],
-      }
-    : {
-        id: crypto.randomUUID(),
-        name: "",
-        enabled: true,
-        target: "leg",
-        conditions: [{ field: "depStation", op: "equals", value: "" }],
-        actions: [],
-      };
+const newRule = (target: RecordTarget = "leg"): Rule => {
+  const base = { id: crypto.randomUUID(), name: "", enabled: true };
+  if (target === "header")
+    return {
+      ...base,
+      target: "header",
+      conditions: [{ field: "airline", op: "equals", value: "" }],
+      actions: [],
+    };
+  return {
+    ...base,
+    target,
+    conditions: [{ field: "depStation", op: "equals", value: "" }],
+    actions: [],
+  };
+};
 
 function RuleGroup({
   title,
@@ -146,6 +149,7 @@ export function RulesPanel({
 
   const legRules = rules.filter((r) => r.target === "leg");
   const headerRules = rules.filter((r) => r.target === "header");
+  const segmentRules = rules.filter((r) => r.target === "segment");
 
   const toggle = (rule: Rule, enabled: boolean) =>
     onChange(rules.map((r) => (r.id === rule.id ? { ...r, enabled } : r)));
@@ -229,6 +233,14 @@ export function RulesPanel({
           title="Carrier Record"
           rules={headerRules}
           onMove={(i, dir) => move("header", i, dir)}
+          onToggle={toggle}
+          onEdit={setEditing}
+          onDelete={remove}
+        />
+        <RuleGroup
+          title="Segment Data Record"
+          rules={segmentRules}
+          onMove={(i, dir) => move("segment", i, dir)}
           onToggle={toggle}
           onEdit={setEditing}
           onDelete={remove}

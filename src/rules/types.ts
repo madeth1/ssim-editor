@@ -1,4 +1,4 @@
-import type { HeaderField, LegField } from "../ssim/types";
+import type { HeaderField, LegField, SegmentField } from "../ssim/types";
 
 export const CONDITION_OPS = [
   "equals",
@@ -45,6 +45,9 @@ export const LEG_CONDITION_FIELDS: LegField[] = [
 /** The only header fields rules may modify. */
 export const HEADER_ACTION_FIELDS: HeaderField[] = ["airline"];
 
+/** The segment (Type 4) data elements rules may author a record for. */
+export const SEGMENT_ACTION_FIELDS: SegmentField[] = ["eticket"];
+
 /** Header fields conditions may match on. */
 export const HEADER_CONDITION_FIELDS: HeaderField[] = ["airline"];
 
@@ -55,7 +58,9 @@ export const ACTION_KINDS = ["setValue", "replaceText"] as const;
 
 export type ActionKind = (typeof ACTION_KINDS)[number];
 
-export interface RuleAction<F extends string = LegField | HeaderField> {
+export interface RuleAction<
+  F extends string = LegField | HeaderField | SegmentField,
+> {
   field: F;
   kind: ActionKind;
   /** setValue: new value · replaceText: "search=>replacement" */
@@ -80,7 +85,18 @@ export interface HeaderRule extends RuleBase {
   actions: RuleAction<HeaderField>[];
 }
 
-export type Rule = LegRule | HeaderRule;
+/**
+ * Adds a Type 4 segment data record to each leg it matches, rather than editing
+ * an existing record. Conditions are leg conditions — a segment record is always
+ * anchored to a flight leg — so matchesLeg() serves both targets unchanged.
+ */
+export interface SegmentRule extends RuleBase {
+  target: "segment";
+  conditions: Condition<LegField>[]; // AND semantics
+  actions: RuleAction<SegmentField>[];
+}
+
+export type Rule = LegRule | HeaderRule | SegmentRule;
 
 interface ChangeBase {
   lineIndex: number;
@@ -101,4 +117,11 @@ export interface HeaderChange extends ChangeBase {
   field: HeaderField;
 }
 
-export type Change = LegChange | HeaderChange;
+/** `lineIndex` is the anchor leg's line — the record itself has none until export
+ *  splices it in. `before` is always blank: the record did not exist. */
+export interface SegmentChange extends ChangeBase {
+  target: "segment";
+  field: SegmentField;
+}
+
+export type Change = LegChange | HeaderChange | SegmentChange;

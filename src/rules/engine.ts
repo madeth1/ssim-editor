@@ -1,4 +1,13 @@
 import {
+  buildSegmentLine,
+  legIdentityOfLine,
+  placeAfter,
+  segmentDei,
+  segmentKey,
+  type ExistingSegments,
+  type SegmentRecord,
+} from "../ssim/segment";
+import {
   HEADER_FIELDS,
   LEG_FIELDS,
   MAX_OFF_POINTS,
@@ -18,6 +27,7 @@ import type {
   LegRule,
   Rule,
   RuleAction,
+  SegmentRule,
 } from "./types";
 
 const MONTHS = [
@@ -102,14 +112,22 @@ function applyAction<F extends string>(
   }
 }
 
-/** Pure: returns new legs/headers; inputs are never mutated. */
+/** Pure: returns new legs/headers/segments; inputs are never mutated. */
 export function applyRules(
   legs: FlightLeg[],
   headers: HeaderRecord[],
   rules: Rule[],
-): { legs: FlightLeg[]; headers: HeaderRecord[]; changes: Change[] } {
+  /** the Type 4 records already in the file (SsimFile.existingSegments) */
+  existingSegments?: ExistingSegments,
+): {
+  legs: FlightLeg[];
+  headers: HeaderRecord[];
+  segments: SegmentRecord[];
+  changes: Change[];
+} {
   const legRules = rules.filter((r): r is LegRule => r.target === "leg");
   const headerRules = rules.filter((r): r is HeaderRule => r.target === "header");
+  const segmentRules = rules.filter((r): r is SegmentRule => r.target === "segment");
 
   const legChanges: Change[] = [];
   const outLegs = legs.map((orig) => {
@@ -185,5 +203,63 @@ export function applyRules(
     return header;
   });
 
-  return { legs: outLegs, headers: outHeaders, changes: [...legChanges, ...headerChanges] };
+  // Segment records are derived from the *applied* legs, so a leg rule that
+  // rewrites a station is reflected in the Type 4 record built from it.
+  const segments: SegmentRecord[] = [];
+  const segmentChanges: Change[] = [];
+  const emitted = new Set(existingSegments?.keys);
+  for (const leg of outLegs) {
+    for (const rule of segmentRules) {
+      if (!rule.enabled) continue;
+      if (!rule.conditions.every((c) => matchesLeg(leg, c))) continue;
+      for (const action of rule.actions) {
+        // only setValue is offered for segment rules — there is no prior value to
+        // replace on a record that doesn't exist yet
+        const value = action.value.trim();
+        const dei = segmentDei(action.field);
+        // "does this leg already carry the DEI?" is a question about the input
+        // file, so it is asked of the leg's raw bytes — leg rules record their
+        // edits in .values and never touch .raw. Read through legField instead,
+        // the key would pick up a rewritten flight designator, stop matching the
+        // records parsed from the file, and collide with any other leg the same
+        // rule had given that designator.
+        const key = segmentKey(legIdentityOfLine(leg.raw), dei);
+        if (emitted.has(key)) continue; // already in the file, or already authored
+        emitted.add(key);
+
+        // buildSegmentLine is the single authority on whether a record can be
+        // written; its failure is the preview warning, so the two never drift.
+        let line: string | null = null;
+        let warning: string | undefined;
+        try {
+          line = buildSegmentLine(leg, action.field, value);
+        } catch (e) {
+          warning = `${e instanceof Error ? e.message : e} — fix before exporting`;
+        }
+
+        segments.push({
+          afterLineIndex: placeAfter(existingSegments, leg.lineIndex, dei),
+          line,
+          ...(warning ? { error: warning } : {}),
+        });
+        segmentChanges.push({
+          target: "segment",
+          lineIndex: leg.lineIndex,
+          field: action.field,
+          before: "",
+          after: value,
+          ruleId: rule.id,
+          ruleName: rule.name,
+          warning,
+        });
+      }
+    }
+  }
+
+  return {
+    legs: outLegs,
+    headers: outHeaders,
+    segments,
+    changes: [...legChanges, ...headerChanges, ...segmentChanges],
+  };
 }

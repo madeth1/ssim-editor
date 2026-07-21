@@ -8,8 +8,11 @@ import {
   HEADER_CONDITION_OPS,
   LEG_ACTION_FIELDS,
   LEG_CONDITION_FIELDS,
+  SEGMENT_ACTION_FIELDS,
   type Rule,
 } from "./types";
+
+const TARGETS: RecordTarget[] = ["leg", "header", "segment"];
 
 // ponytail: localStorage persists fine in the Tauri webview; move to the app
 // config dir (tauri fs) only if rules ever need to survive a webview data reset.
@@ -37,10 +40,17 @@ export function parseRulesJson(json: string): Rule[] {
   if (!Array.isArray(data)) throw new Error("Rules file must be a JSON array");
   return data.map((r, i) => {
     const name = typeof r?.name === "string" ? r.name : `Imported rule ${i + 1}`;
-    const target: RecordTarget = r?.target === "header" ? "header" : "leg";
+    const target: RecordTarget = TARGETS.includes(r?.target) ? r.target : "leg";
+    // segment rules match flight legs — they only differ in what they write
     const conditionFields = target === "header" ? HEADER_CONDITION_FIELDS : LEG_CONDITION_FIELDS;
     const conditionOps = target === "header" ? HEADER_CONDITION_OPS : CONDITION_OPS;
-    const actionFields = target === "header" ? HEADER_ACTION_FIELDS : LEG_ACTION_FIELDS;
+    // widened: three disjoint field unions would narrow .includes() to never
+    const actionFields: string[] =
+      target === "header"
+        ? HEADER_ACTION_FIELDS
+        : target === "segment"
+          ? SEGMENT_ACTION_FIELDS
+          : LEG_ACTION_FIELDS;
     const conditions = Array.isArray(r?.conditions) ? r.conditions : [];
     const actions = Array.isArray(r?.actions) ? r.actions : [];
     for (const c of conditions) {
@@ -48,8 +58,12 @@ export function parseRulesJson(json: string): Rule[] {
       if (!fieldOk || !conditionOps.includes(c?.op) || typeof c?.value !== "string")
         throw new Error(`Rule "${name}" has an invalid condition: ${JSON.stringify(c)}`);
     }
+    // a segment rule authors a record that does not exist yet, so there is no
+    // prior text for replaceText to act on — the editor offers only setValue
+    const actionKinds: readonly string[] =
+      target === "segment" ? ["setValue"] : ACTION_KINDS;
     for (const a of actions) {
-      if (!actionFields.includes(a?.field) || !ACTION_KINDS.includes(a.kind) || typeof a.value !== "string")
+      if (!actionFields.includes(a?.field) || !actionKinds.includes(a?.kind) || typeof a?.value !== "string")
         throw new Error(`Rule "${name}" has an invalid action: ${JSON.stringify(a)}`);
     }
     return {

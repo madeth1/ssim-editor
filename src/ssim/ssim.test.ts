@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "./parse";
+import { buildSegmentLine } from "./segment";
 import { serializeSsim } from "./serialize";
 import { headerField, legField } from "./types";
-import { makeSampleSsim } from "./fixture";
+import { makeSampleSsim, makeSegmentLine } from "./fixture";
 
 const sample = makeSampleSsim();
 
@@ -186,5 +187,135 @@ describe("serializeSsim", () => {
       values: { ...h.values, airline: "ABCD" },
     }));
     expect(() => serializeSsim(file, file.legs, headers)).toThrow(/too long/);
+  });
+});
+
+// Inserting a record is the one operation that cannot preserve the byte-identical
+// round-trip: Record Serial Numbers (bytes 195-200) are sequential across all
+// record types, so everything after an insertion shifts. See §7.5.4 and the
+// Record Serial Number remarks on every record type.
+describe("segment records", () => {
+  const file = parseSsim(sample);
+  // the sample ends with a newline, so the split has a trailing empty element
+  const recordsOf = (text: string) => text.split("\n").slice(0, -1);
+  // legs 0 and 3 sit at lines 3 and 6 of the 8-line sample
+  const segmentsAt = (...legIndexes: number[]) =>
+    legIndexes.map((i) => ({
+      afterLineIndex: file.legs[i].lineIndex,
+      line: buildSegmentLine(file.legs[i], "eticket", "ET"),
+    }));
+
+  it("inserts each record directly after the leg it belongs to", () => {
+    const out = recordsOf(serializeSsim(file, file.legs, file.headers, segmentsAt(0, 3)));
+    expect(out).toHaveLength(10);
+    expect(out[3][0]).toBe("3"); // leg 0
+    expect(out[4][0]).toBe("4"); // its segment record
+    expect(out[4].slice(28, 39)).toBe("AB505FCOLIN");
+    expect(out[5][0]).toBe("3"); // leg 1, unchanged
+    expect(out[7][0]).toBe("3"); // leg 3
+    expect(out[8].slice(28, 39)).toBe("AB505FCOJFK");
+    expect(out[9][0]).toBe("5"); // trailer
+  });
+
+  it("renumbers every serial and the trailer's check reference", () => {
+    const out = recordsOf(serializeSsim(file, file.legs, file.headers, segmentsAt(0, 3)));
+    // filler (line 1) is skipped, so the sequence runs 1,_,2,3,4,5,6,7,8,9
+    expect(out.map((l) => l.slice(194, 200))).toEqual([
+      "000001", // type 1 header
+      "0".repeat(200).slice(194, 200), // filler, untouched
+      "000002", // type 2 carrier
+      "000003", // leg 0
+      "000004", // segment record
+      "000005", // leg 1
+      "000006", // leg 2
+      "000007", // leg 3
+      "000008", // segment record
+      "000009", // type 5 trailer
+    ]);
+    // the trailer's check reference is the previous record's serial
+    expect(out[9].slice(187, 193)).toBe("000008");
+  });
+
+  it("leaves zero-filler records out of the sequence, byte for byte", () => {
+    const out = recordsOf(serializeSsim(file, file.legs, file.headers, segmentsAt(0)));
+    expect(out[1]).toBe("0".repeat(200));
+  });
+
+  it("renumbers nothing when no records are added", () => {
+    expect(serializeSsim(file, file.legs, file.headers, [])).toBe(sample);
+    expect(serializeSsim(file, file.legs, file.headers)).toBe(sample);
+  });
+
+  // A record that can't be built must fail the export, not vanish from it — the
+  // engine surfaces the same reason as a preview warning first.
+  it("throws the reason when a record could not be built", () => {
+    const unbuildable = [
+      { afterLineIndex: 3, line: null, error: "leg 26 has no board/off point indicator" },
+    ];
+    expect(() => serializeSsim(file, file.legs, file.headers, unbuildable)).toThrow(
+      /no board\/off point indicator/,
+    );
+  });
+
+  it("refuses to build a record for a leg past the indicator alphabet", () => {
+    const leg = { ...file.legs[0], values: { legSequence: "26" } };
+    expect(() => buildSegmentLine(leg, "eticket", "ET")).toThrow(/only legs 1-25/);
+  });
+
+  it("rejects a data value longer than the DEI's format", () => {
+    expect(() => buildSegmentLine(file.legs[0], "eticket", "ETX")).toThrow(/too long/);
+  });
+
+  // Skipping a short record would leave every later serial one too low and say
+  // nothing — the serial is mandatory on every record type, so this must fail.
+  it("refuses to renumber when a record is too short to hold a serial", () => {
+    const truncated = sample.split("\n");
+    truncated[0] = truncated[0].slice(0, 50);
+    const f = parseSsim(truncated.join("\n"));
+    expect(() =>
+      serializeSsim(f, f.legs, f.headers, [
+        { afterLineIndex: 3, line: buildSegmentLine(f.legs[0], "eticket", "ET") },
+      ]),
+    ).toThrow(/too short to hold a Record Serial Number/);
+  });
+});
+
+describe("parsing existing segment records", () => {
+  it("indexes them by leg and DEI without parsing them into a model", () => {
+    const legKey = sample.split("\n")[3].slice(1, 14);
+    const withSegment = [
+      ...sample.split("\n").slice(0, 4),
+      makeSegmentLine({ legKey, board: "FCO", off: "LIN" }),
+      ...sample.split("\n").slice(4),
+    ].join("\n");
+
+    const file = parseSsim(withSegment);
+    expect(file.legs).toHaveLength(4); // the type 4 line is not a leg
+    // identity is bytes 2-14 plus the Itinerary Variation Identifier Overflow,
+    // blank on both records here
+    expect(file.existingSegments.keys.has(legKey + " " + "505")).toBe(true);
+    expect(file.existingSegments.keys.size).toBe(1);
+    // and it is anchored to the leg line it follows, for DEI-ordered placement
+    expect(file.existingSegments.byLeg.get(3)).toEqual([{ dei: "505", lineIndex: 4 }]);
+    // and it still passes through untouched
+    expect(serializeSsim(file, file.legs, file.headers)).toBe(withSegment);
+  });
+
+  // Ch.2 (PDF p64): past 99 itineraries for one designator the IVI wraps to "00"
+  // and the overflow byte carries the true hundreds digit, so bytes 2-14 alone
+  // stop being unique. Two legs identical but for that byte are different legs.
+  it("distinguishes legs that differ only in the IVI overflow byte", () => {
+    const legKey = sample.split("\n")[3].slice(1, 14);
+    const overflowed = (b: string) =>
+      makeSegmentLine({ legKey, board: "FCO", off: "LIN" }).replace(
+        /^(.{27}) /,
+        `$1${b}`,
+      );
+    const file = parseSsim(
+      [...sample.split("\n").slice(0, 4), overflowed("1"), overflowed("2"), ...sample.split("\n").slice(4)].join("\n"),
+    );
+    expect(file.existingSegments.keys.size).toBe(2);
+    expect(file.existingSegments.keys.has(legKey + "1" + "505")).toBe(true);
+    expect(file.existingSegments.keys.has(legKey + "2" + "505")).toBe(true);
   });
 });

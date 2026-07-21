@@ -1,4 +1,7 @@
 // IATA SSIM Chapter 7 — fixed-width 200-char records.
+// Type-only, so no runtime cycle with ./segment (which imports values from here).
+import type { ExistingSegments } from "./segment";
+
 // Type 3 (flight leg) column layout; start is 0-based.
 export const LEG_FIELDS = {
   operationalSuffix: { start: 1, len: 1, label: "Op. suffix" },
@@ -72,7 +75,26 @@ export interface HeaderRecord {
   values?: Partial<Record<HeaderField, string>>;
 }
 
-export type RecordTarget = "leg" | "header";
+// Type 4 (segment data) column layout; start is 0-based.
+//
+// We author exactly one field: the Data field at byte 40. Everything before it is
+// either copied from the anchor leg (bytes 2-14 identify the leg, byte 28 is the
+// Itinerary Variation Identifier Overflow from Type 3 byte 128) or derived from it
+// (bytes 29-39: the board/off point indicators, the DEI, and the two stations) —
+// see buildSegmentLine in ./segment.
+//
+// `len` is the DEI's own format from the Ch.2 glossary, not the 155 bytes the Data
+// field spans: DEI 505 is `aa`, exactly two characters. That gives the rule editor
+// a real maximum to validate against.
+export const SEGMENT_FIELDS = {
+  eticket: { start: 39, len: 2, dei: "505", label: "E-ticketing (DEI 505)" },
+} as const;
+
+export type SegmentField = keyof typeof SEGMENT_FIELDS;
+
+export const SEGMENT_FIELD_NAMES = Object.keys(SEGMENT_FIELDS) as SegmentField[];
+
+export type RecordTarget = "leg" | "header" | "segment";
 
 function readField(
   raw: string,
@@ -92,7 +114,8 @@ export const MAX_OFF_POINTS = 11;
  * 0-based slot for this leg's own off point within a positional field.
  * Null when the leg sequence is missing, malformed, or past the 11 the field
  * holds — the spec routes 12+ leg flights through the byte-161 overflow
- * indicator and a Type 4 record, which this app does not write.
+ * indicator and a Type 4 record carrying DEI 170-173, which this app does not
+ * write. (It does write Type 4 records for DEI 505; see ./segment.)
  */
 export function offPointIndex(leg: FlightLeg): number | null {
   const seq = Number(legField(leg, "legSequence"));
@@ -133,6 +156,13 @@ export interface SsimFile {
   trailingNewline: boolean;
   legs: FlightLeg[];
   headers: HeaderRecord[];
+  /**
+   * The Type 4 records already in the file. Type 4 lines are not parsed into a
+   * model — they pass through raw — but they are indexed so we never author a
+   * second record for a leg that has one, and so a new record lands in the DEI
+   * order §7.5.4 recommends.
+   */
+  existingSegments: ExistingSegments;
 }
 
 function padToSpec(
@@ -164,9 +194,17 @@ export function padHeaderField(field: HeaderField, value: string): string {
   return padToSpec(HEADER_FIELDS[field], value);
 }
 
-/** Field spec for either record kind, keyed by a rule's target. */
-export function fieldSpec(target: RecordTarget, field: LegField | HeaderField) {
-  return target === "header"
-    ? HEADER_FIELDS[field as HeaderField]
-    : LEG_FIELDS[field as LegField];
+/** Pad a trimmed value back to its fixed column width. Throws if it doesn't fit. */
+export function padSegmentField(field: SegmentField, value: string): string {
+  return padToSpec(SEGMENT_FIELDS[field], value);
+}
+
+/** Field spec for any record kind, keyed by a rule's target. */
+export function fieldSpec(
+  target: RecordTarget,
+  field: LegField | HeaderField | SegmentField,
+) {
+  if (target === "header") return HEADER_FIELDS[field as HeaderField];
+  if (target === "segment") return SEGMENT_FIELDS[field as SegmentField];
+  return LEG_FIELDS[field as LegField];
 }

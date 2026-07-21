@@ -73,4 +73,44 @@ describe("parseRulesJson", () => {
       ),
     ).toThrow(/invalid condition/);
   });
+
+  // A segment rule that silently downgraded to "leg" here would throw in the
+  // engine on a field the leg target doesn't have.
+  it("accepts a segment rule, with leg conditions", () => {
+    const [r] = parseRulesJson(
+      '[{"target": "segment", "conditions": [{"field": "depStation", "op": "equals", "value": "FCO"}], "actions": [{"field": "eticket", "kind": "setValue", "value": "ET"}]}]',
+    );
+    expect(r.target).toBe("segment");
+    expect(r.actions).toEqual([{ field: "eticket", kind: "setValue", value: "ET" }]);
+  });
+
+  it("rejects a segment rule writing a leg field", () => {
+    expect(() =>
+      parseRulesJson(
+        '[{"target": "segment", "conditions": [], "actions": [{"field": "aircraftType", "kind": "setValue", "value": "32Q"}]}]',
+      ),
+    ).toThrow(/invalid action/);
+  });
+
+  // The editor only offers setValue for a segment rule; an import must not be
+  // able to smuggle in a kind the engine would ignore and write literally.
+  it("rejects a segment rule using replaceText", () => {
+    expect(() =>
+      parseRulesJson(
+        '[{"target": "segment", "conditions": [], "actions": [{"field": "eticket", "kind": "replaceText", "value": "EN=>ET"}]}]',
+      ),
+    ).toThrow(/invalid action/);
+  });
+
+  it("still accepts replaceText on a leg rule", () => {
+    const [r] = parseRulesJson(
+      '[{"target": "leg", "conditions": [], "actions": [{"field": "aircraftType", "kind": "replaceText", "value": "32N=>32Q"}]}]',
+    );
+    expect(r.actions[0].kind).toBe("replaceText");
+  });
+
+  it("falls back to leg for an unknown target", () => {
+    const [r] = parseRulesJson('[{"target": "nonsense", "conditions": [], "actions": []}]');
+    expect(r.target).toBe("leg");
+  });
 });

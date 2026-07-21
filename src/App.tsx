@@ -55,7 +55,8 @@ function ChangesDrawer({
         </thead>
         <tbody>
           {applied.changes.slice(0, visible).map((c, i) => {
-            const leg = c.target === "leg" ? legByLine.get(c.lineIndex) : undefined;
+            // a segment change is anchored to the leg it adds a record to
+            const leg = c.target !== "header" ? legByLine.get(c.lineIndex) : undefined;
             const header = c.target === "header" ? headerByLine.get(c.lineIndex) : undefined;
             return (
               <tr key={i} className="border-t border-border/50">
@@ -64,8 +65,12 @@ function ChangesDrawer({
                   {header && `Carrier header (${headerField(header, "airline")})`}
                 </td>
                 <td className="px-2 py-1">{fieldSpec(c.target, c.field).label}</td>
-                <td className="px-2 py-1 text-muted-foreground line-through">
-                  {c.before || "(blank)"}
+                <td className="px-2 py-1 text-muted-foreground">
+                  {c.target === "segment" ? (
+                    "(new record)"
+                  ) : (
+                    <span className="line-through">{c.before || "(blank)"}</span>
+                  )}
                 </td>
                 <td className="px-2 py-1 font-semibold text-amber-700 dark:text-amber-400">
                   {c.after || "(blank)"}
@@ -145,13 +150,24 @@ function App() {
             { field: "trafficRestriction", kind: "setValue", value: "K" },
           ],
         },
+        {
+          id: "demo3",
+          name: "E-ticket FCO departures",
+          enabled: true,
+          target: "segment",
+          conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
+          actions: [{ field: "eticket", kind: "setValue", value: "ET" }],
+        },
       ]);
     });
   }, []);
 
   // Live preview: rules re-run on every change; original file is never touched.
   const applied = useMemo(
-    () => (file ? applyRules(file.legs, file.headers, rules) : null),
+    () =>
+      file
+        ? applyRules(file.legs, file.headers, rules, file.existingSegments)
+        : null,
     [file, rules],
   );
 
@@ -211,13 +227,20 @@ function App() {
   const exportFile = async () => {
     if (!file || !applied) return;
     try {
-      const text = serializeSsim(file, applied.legs, applied.headers);
+      const text = serializeSsim(
+        file,
+        applied.legs,
+        applied.headers,
+        applied.segments,
+      );
       const path = await saveSsimAs(text, filePath);
-      if (path)
+      if (path) {
+        const added = applied.segments.length;
         setStatus({
           kind: "info",
-          text: `Exported ${applied.changes.length} change${applied.changes.length === 1 ? "" : "s"} to ${basename(path)}`,
+          text: `Exported ${applied.changes.length} change${applied.changes.length === 1 ? "" : "s"}${added > 0 ? ` (${added.toLocaleString()} segment record${added === 1 ? "" : "s"} added, serials renumbered)` : ""} to ${basename(path)}`,
         });
+      }
     } catch (e) {
       setStatus({ kind: "error", text: `Export failed: ${e instanceof Error ? e.message : e}` });
     }

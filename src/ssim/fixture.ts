@@ -38,6 +38,46 @@ export function makeLegLine(
   return line.slice(0, 194) + String(serial).padStart(6, "0");
 }
 
+/**
+ * A Type 4 segment record, for fixtures that need one already in the file (e.g.
+ * to prove an existing DEI is not duplicated). Deliberately hand-assembled rather
+ * than built via buildSegmentLine — a fixture that shares the production layout
+ * code cannot catch a layout error in it.
+ */
+export function makeSegmentLine(
+  {
+    legKey,
+    board,
+    off,
+    boardIndicator = "A",
+    offIndicator = "B",
+    dei = "505",
+    data = "ET",
+  }: {
+    /** bytes 2-14 of the leg this belongs to */
+    legKey: string;
+    board: string;
+    off: string;
+    boardIndicator?: string;
+    offIndicator?: string;
+    dei?: string;
+    data?: string;
+  },
+  serial = 10,
+): string {
+  const line =
+    "4" +
+    legKey.padEnd(13) +
+    " ".repeat(14) + // bytes 15-27 spare + byte 28 itin. variation overflow
+    boardIndicator +
+    offIndicator +
+    dei +
+    board +
+    off +
+    data.padEnd(155);
+  return line + String(serial).padStart(6, "0");
+}
+
 export function makeHeaderLine(values: Partial<Record<HeaderField, string>>): string {
   let line = pad200("2");
   for (const [field, value] of Object.entries(values) as [

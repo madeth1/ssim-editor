@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
 import { headerField, legField } from "../ssim/types";
 import { DEFAULT_LEG, makeLegLine, makeSampleSsim } from "../ssim/fixture";
+import { legIdentityOfLine, segmentKey, type ExistingSegments } from "../ssim/segment";
 import { applyRules, parseSsimDate } from "./engine";
-import type { HeaderRule, LegRule, Rule } from "./types";
+import type { HeaderRule, LegRule, Rule, SegmentRule } from "./types";
 
 const legs = () => parseSsim(makeSampleSsim()).legs;
 const headers = () => parseSsim(makeSampleSsim()).headers;
@@ -192,6 +193,163 @@ describe("header rules", () => {
       [rule({ actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }] })],
     );
     expect(headerField(out[0], "airline")).toBe("XX"); // untouched
+  });
+});
+
+// A segment rule authors a Type 4 record for each leg it matches, rather than
+// editing an existing one. It matches on leg conditions like any leg rule.
+describe("segment rules", () => {
+  const segmentRule = (over: Partial<SegmentRule> = {}): Rule => ({
+    id: "sr1",
+    name: "e-ticket everything",
+    enabled: true,
+    target: "segment",
+    conditions: [],
+    actions: [{ field: "eticket", kind: "setValue", value: "ET" }],
+    ...over,
+  });
+
+  it("adds one record per matching leg, anchored to that leg's line", () => {
+    const { segments, changes } = applyRules(legs(), headers(), [segmentRule()]);
+    expect(segments).toHaveLength(4);
+    expect(segments.map((s) => s.afterLineIndex)).toEqual([3, 4, 5, 6]);
+    expect(segments[0].line?.slice(28, 39)).toBe("AB505FCOLIN");
+    expect(changes).toHaveLength(4);
+    expect(changes[0]).toMatchObject({
+      target: "segment",
+      field: "eticket",
+      before: "", // the record did not exist
+      after: "ET",
+    });
+  });
+
+  it("honours conditions, same matcher as leg rules", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      segmentRule({ conditions: [{ field: "depStation", op: "equals", value: "LIN" }] }),
+    ]);
+    expect(segments).toHaveLength(1);
+    expect(segments[0].line?.slice(33, 39)).toBe("LINFCO");
+  });
+
+  const carrying = (leg: { raw: string }, dei = "505"): ExistingSegments => ({
+    keys: new Set([segmentKey(legIdentityOfLine(leg.raw), dei)]),
+    byLeg: new Map(),
+  });
+
+  it("skips a leg that already carries the same DEI", () => {
+    const all = legs();
+    const { segments } = applyRules(all, headers(), [segmentRule()], carrying(all[0]));
+    expect(segments).toHaveLength(3);
+    expect(segments.map((s) => s.afterLineIndex)).toEqual([4, 5, 6]);
+  });
+
+  // The "already carries it?" lookup is a question about the input file, so it
+  // must use the leg's original identity. Keyed off the applied leg it would miss
+  // and author a second DEI 505 record on a leg that already has one.
+  it("still skips that leg when a leg rule rewrites the flight designator", () => {
+    const all = legs();
+    const { segments } = applyRules(
+      all,
+      headers(),
+      [
+        rule({ actions: [{ field: "flightNumber", kind: "setValue", value: "77" }] }),
+        segmentRule(),
+      ],
+      carrying(all[0]),
+    );
+    expect(segments).toHaveLength(3);
+    expect(segments.map((s) => s.afterLineIndex)).toEqual([4, 5, 6]);
+    // and the records that are written key to the leg as exported, not as parsed
+    expect(segments[0].line?.slice(5, 9)).toBe("  77");
+  });
+
+  // §7.5.4: records for the same off point "should appear together and be ordered
+  // according to the numeric sequence of the Data Element Identifiers starting
+  // with the lowest number" — so 505 goes after an existing 010, not before it.
+  it("places a new record after the lower DEIs the leg already carries", () => {
+    const all = legs();
+    const { segments } = applyRules(all, headers(), [segmentRule()], {
+      keys: new Set(),
+      byLeg: new Map([
+        [3, [{ dei: "010", lineIndex: 4 }, { dei: "106", lineIndex: 5 }]],
+      ]),
+    });
+    expect(segments[0].afterLineIndex).toBe(5); // after 106, not after the leg
+    expect(segments[1].afterLineIndex).toBe(4); // a leg with none is unaffected
+  });
+
+  it("places a new record before a higher DEI the leg already carries", () => {
+    const all = legs();
+    const { segments } = applyRules(all, headers(), [segmentRule()], {
+      keys: new Set(),
+      byLeg: new Map([[3, [{ dei: "710", lineIndex: 4 }]]]),
+    });
+    expect(segments[0].afterLineIndex).toBe(3);
+  });
+
+  it("adds one record when two rules ask for the same leg and DEI", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      segmentRule(),
+      segmentRule({ id: "sr2", name: "duplicate" }),
+    ]);
+    expect(segments).toHaveLength(4);
+  });
+
+  // Segment records are derived from the applied legs, so an earlier leg rule
+  // rewriting a station must be reflected in the board/off points.
+  it("uses stations as a leg rule left them", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      rule({ actions: [{ field: "depStation", kind: "setValue", value: "CIA" }] }),
+      segmentRule(),
+    ]);
+    expect(segments[0].line?.slice(33, 39)).toBe("CIALIN");
+  });
+
+  // Bytes 2-14 tie the record to its leg. Sliced from the raw line they would
+  // still name the old flight, leaving the record keyed to a leg that no longer
+  // exists in the exported file.
+  it("uses the flight designator as a leg rule left it", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      rule({
+        conditions: [{ field: "flightNumber", op: "equals", value: "1002" }],
+        actions: [{ field: "flightNumber", kind: "setValue", value: "77" }],
+      }),
+      segmentRule(),
+    ]);
+    // 13 bytes: suffix(1) airline(3) flight no.(4) itin(2) leg(2) service(1)
+    expect(segments[0].line?.slice(1, 14)).toBe(" " + "XX " + "  77" + "01" + "01" + "J");
+    expect(segments[0].line?.slice(5, 9)).toBe("  77"); // right justified
+  });
+
+  // Preview warns; the unbuildable record then throws at export (see ssim.test).
+  it("warns instead of throwing when a record can't be placed", () => {
+    const unplaceable = [{ ...legs()[0], values: { legSequence: "26" } }];
+    const { segments, changes } = applyRules(unplaceable, headers(), [segmentRule()]);
+    expect(changes[0].warning).toMatch(/only legs 1-25/);
+    expect(segments[0].line).toBeNull();
+    expect(segments[0].error).toMatch(/only legs 1-25/);
+  });
+
+  it("warns when the value doesn't fit the DEI's format", () => {
+    const { changes, segments } = applyRules(legs(), headers(), [
+      segmentRule({ actions: [{ field: "eticket", kind: "setValue", value: "ETX" }] }),
+    ]);
+    expect(changes[0].warning).toMatch(/max 2 chars/);
+    expect(segments[0].line).toBeNull();
+  });
+
+  it("adds nothing when disabled", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      segmentRule({ enabled: false }),
+    ]);
+    expect(segments).toHaveLength(0);
+  });
+
+  it("is absent from a run with no segment rules", () => {
+    const { segments } = applyRules(legs(), headers(), [
+      rule({ actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }] }),
+    ]);
+    expect(segments).toEqual([]);
   });
 });
 
