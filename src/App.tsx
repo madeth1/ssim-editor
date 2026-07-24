@@ -23,6 +23,7 @@ import { parseSsim } from "@/ssim/parse";
 import { serializeSsim } from "@/ssim/serialize";
 
 const DRAWER_BATCH = 200;
+const EMPTY_SET: Set<number> = new Set();
 
 function ChangesDrawer({
   applied,
@@ -64,10 +65,18 @@ function ChangesDrawer({
                   {leg && `${legField(leg, "airline")} ${legField(leg, "flightNumber")}`}
                   {header && `Carrier header (${headerField(header, "airline")})`}
                 </td>
-                <td className="px-2 py-1">{fieldSpec(c.target, c.field).label}</td>
+                <td className="px-2 py-1">
+                  {c.target === "filter"
+                    ? c.disposition === "remove"
+                      ? "Remove leg"
+                      : "Filtered out"
+                    : fieldSpec(c.target, c.field).label}
+                </td>
                 <td className="px-2 py-1 text-muted-foreground">
                   {c.target === "segment" ? (
                     "(new record)"
+                  ) : c.target === "filter" ? (
+                    c.before
                   ) : (
                     <span className="line-through">{c.before || "(blank)"}</span>
                   )}
@@ -158,6 +167,15 @@ function App() {
           conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
           actions: [{ field: "eticket", kind: "setValue", value: "ET" }],
         },
+        {
+          id: "demo4",
+          name: "Drop FCO–JFK",
+          enabled: false,
+          target: "filter",
+          disposition: "remove",
+          filterBy: "route",
+          values: ["FCO-JFK"],
+        },
       ]);
     });
   }, []);
@@ -174,7 +192,8 @@ function App() {
   const changeMap: ChangeMap = useMemo(() => {
     const map: ChangeMap = new Map();
     for (const c of applied?.changes ?? [])
-      map.set(changeKey(c.lineIndex, c.field), c);
+      // filter changes drop a whole leg — they have no field to key on
+      if (c.target !== "filter") map.set(changeKey(c.lineIndex, c.field), c);
     return map;
   }, [applied]);
 
@@ -232,13 +251,20 @@ function App() {
         applied.legs,
         applied.headers,
         applied.segments,
+        applied.removedLines,
       );
       const path = await saveSsimAs(text, filePath);
       if (path) {
         const added = applied.segments.length;
+        const removed = applied.removedLines.size;
+        const notes = [
+          added > 0 && `${added.toLocaleString()} segment record${added === 1 ? "" : "s"} added`,
+          removed > 0 && `${removed.toLocaleString()} leg${removed === 1 ? "" : "s"} removed`,
+          (added > 0 || removed > 0) && "serials renumbered",
+        ].filter(Boolean);
         setStatus({
           kind: "info",
-          text: `Exported ${applied.changes.length} change${applied.changes.length === 1 ? "" : "s"}${added > 0 ? ` (${added.toLocaleString()} segment record${added === 1 ? "" : "s"} added, serials renumbered)` : ""} to ${basename(path)}`,
+          text: `Exported ${applied.changes.length} change${applied.changes.length === 1 ? "" : "s"}${notes.length ? ` (${notes.join(", ")})` : ""} to ${basename(path)}`,
         });
       }
     } catch (e) {
@@ -298,7 +324,12 @@ function App() {
                   </span>
                 )}
               </div>
-              <FlightTable legs={shownLegs} changes={preview ? changeMap : new Map()} warningsByLine={preview ? warningsByLine : new Map()} />
+              <FlightTable
+                legs={shownLegs}
+                changes={preview ? changeMap : new Map()}
+                warningsByLine={preview ? warningsByLine : new Map()}
+                removedLines={preview ? (applied?.removedLines ?? EMPTY_SET) : EMPTY_SET}
+              />
             </>
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-4">

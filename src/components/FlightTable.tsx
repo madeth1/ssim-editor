@@ -71,10 +71,13 @@ export function FlightTable({
   legs,
   changes,
   warningsByLine,
+  removedLines,
 }: {
   legs: FlightLeg[];
   changes: ChangeMap;
   warningsByLine: Map<number, string>;
+  /** line indices a filter rule will drop from the export — shown struck through */
+  removedLines: Set<number>;
 }) {
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -115,13 +118,16 @@ export function FlightTable({
           {virtualizer.getVirtualItems().map((row) => {
             const leg = legs[row.index];
             const warning = warningsByLine.get(leg.lineIndex);
+            const removed = removedLines.has(leg.lineIndex);
             return (
               <div
                 key={row.key}
                 className={cn(
                   GRID,
                   "absolute top-0 left-0 w-full border-b border-border/50 font-mono text-[13px] hover:bg-muted/30",
+                  removed && "text-muted-foreground/50 line-through decoration-destructive/60",
                 )}
+                title={removed ? "This leg will be removed from the exported file" : undefined}
                 style={{
                   height: row.size,
                   transform: `translateY(${row.start}px)`,

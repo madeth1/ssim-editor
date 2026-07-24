@@ -107,29 +107,49 @@ function renumber(lines: string[]): string[] {
  * every other line — are emitted verbatim, so no-change round-trips are
  * byte-identical to the input.
  *
- * Adding segment records is the one thing that cannot preserve that: inserting a
- * record shifts every serial after it, so the whole file is renumbered. Nothing
- * is renumbered when no segment records are added.
+ * Two things cannot preserve that, and both shift every serial after them, so
+ * both force a full renumber (nothing is renumbered otherwise):
+ *  - Adding a segment record inserts a line.
+ *  - A filter rule dropping a leg removes its line — and the Type 4 segment
+ *    records anchored to it, which would otherwise dangle with no leg.
  */
 export function serializeSsim(
   file: SsimFile,
   legs: FlightLeg[],
   headers: HeaderRecord[],
   segments: SegmentRecord[] = [],
+  /** line indices of legs to drop from the output (from applyRules) */
+  removedLines: Set<number> = new Set(),
 ): string {
   let lines = [...file.lines];
   for (const leg of legs) {
+    if (removedLines.has(leg.lineIndex)) continue; // dropping it — don't patch
     if (leg.values) lines[leg.lineIndex] = patchLegLine(leg);
   }
   for (const header of headers) {
     if (header.values) lines[header.lineIndex] = patchHeaderLine(header);
   }
 
-  if (segments.length > 0) {
+  // A dropped leg takes its Type 4 segment records with it — a record keyed to a
+  // leg no longer in the file is exactly the dangling reference we must not emit.
+  const removedSegmentLines = new Set<number>();
+  for (const legLineIndex of removedLines) {
+    for (const rec of file.existingSegments.byLeg.get(legLineIndex) ?? [])
+      removedSegmentLines.add(rec.lineIndex);
+  }
+
+  // Records authored for a leg that is being dropped never reach the output.
+  const addable = segments.filter(
+    (s) =>
+      !removedLines.has(s.afterLineIndex) &&
+      !removedSegmentLines.has(s.afterLineIndex),
+  );
+
+  if (addable.length > 0 || removedLines.size > 0) {
     // group first so one pass builds the output — splicing in place would be
     // quadratic on a file with tens of thousands of legs
     const byLine = new Map<number, string[]>();
-    for (const segment of segments) {
+    for (const segment of addable) {
       if (segment.line === null) throw new Error(segment.error);
       const at = byLine.get(segment.afterLineIndex);
       if (at) at.push(segment.line);
@@ -137,6 +157,7 @@ export function serializeSsim(
     }
     const out: string[] = [];
     lines.forEach((line, i) => {
+      if (removedLines.has(i) || removedSegmentLines.has(i)) return; // dropped
       out.push(line);
       const added = byLine.get(i);
       if (added) out.push(...added);

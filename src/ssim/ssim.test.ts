@@ -3,7 +3,13 @@ import { parseSsim } from "./parse";
 import { buildSegmentLine } from "./segment";
 import { serializeSsim } from "./serialize";
 import { headerField, legField } from "./types";
-import { makeSampleSsim, makeSegmentLine } from "./fixture";
+import {
+  DEFAULT_LEG,
+  makeHeaderLine,
+  makeLegLine,
+  makeSampleSsim,
+  makeSegmentLine,
+} from "./fixture";
 
 const sample = makeSampleSsim();
 
@@ -277,6 +283,57 @@ describe("segment records", () => {
         { afterLineIndex: 3, line: buildSegmentLine(f.legs[0], "eticket", "ET") },
       ]),
     ).toThrow(/too short to hold a Record Serial Number/);
+  });
+});
+
+// A filter rule drops whole leg records. Removal shifts every later serial the
+// same way an insertion does, so the whole file must be renumbered.
+describe("filter removal", () => {
+  const recordsOf = (text: string) => text.split("\n").slice(0, -1);
+
+  it("drops a filtered leg's line and renumbers the serials", () => {
+    const file = parseSsim(sample);
+    // leg 3 is YY0610 FCO-JFK, at line 6 of the 8-line sample
+    const removed = new Set([file.legs[3].lineIndex]);
+    const out = recordsOf(serializeSsim(file, file.legs, file.headers, [], removed));
+    expect(out).toHaveLength(7); // 8 - 1
+    expect(out.some((l) => l[0] === "3" && l.slice(5, 9) === "0610")).toBe(false);
+    // filler stays out of the sequence; the rest renumber contiguously
+    expect(out.map((l) => l.slice(194, 200))).toEqual([
+      "000001", // type 1 header
+      "0".repeat(200).slice(194, 200), // filler, untouched
+      "000002", // type 2 carrier
+      "000003", // leg 0
+      "000004", // leg 1
+      "000005", // leg 2
+      "000006", // type 5 trailer
+    ]);
+    expect(out[6].slice(187, 193)).toBe("000005"); // trailer check reference
+  });
+
+  it("drops the Type 4 segment records attached to a removed leg", () => {
+    const file = parseSsim(
+      [
+        makeHeaderLine({ airline: "XX" }),
+        makeLegLine(DEFAULT_LEG, 2), // leg 0, FCO-LIN
+        makeSegmentLine({ legKey: "XX1002", board: "FCO", off: "LIN" }, 3),
+        makeLegLine(
+          { ...DEFAULT_LEG, flightNumber: "1003", depStation: "LIN", arrStation: "FCO" },
+          4,
+        ), // leg 1
+        "5 XX".padEnd(194) + "000005", // trailer
+      ].join("\n") + "\n",
+    );
+    const removed = new Set([file.legs[0].lineIndex]);
+    const out = recordsOf(serializeSsim(file, file.legs, file.headers, [], removed));
+    expect(out.some((l) => l[0] === "4")).toBe(false); // its segment went with it
+    expect(out.filter((l) => l[0] === "3")).toHaveLength(1); // only leg 1 remains
+    expect(out).toHaveLength(3); // header, leg 1, trailer
+  });
+
+  it("is byte-identical to the input when nothing is removed", () => {
+    const file = parseSsim(sample);
+    expect(serializeSsim(file, file.legs, file.headers, [], new Set())).toBe(sample);
   });
 });
 

@@ -24,7 +24,6 @@ import {
   SEGMENT_FIELDS,
   type HeaderField,
   type LegField,
-  type RecordTarget,
   type SegmentField,
 } from "@/ssim/types";
 import { loadPresets, savePresets, type Preset } from "@/rules/presets";
@@ -34,12 +33,17 @@ import {
   HEADER_CONDITION_OPS,
   LEG_ACTION_FIELDS,
   LEG_CONDITION_FIELDS,
+  ROUTE_PAIR_RE,
   SEGMENT_ACTION_FIELDS,
   type ActionKind,
   type Condition,
   type ConditionOp,
+  type FilterBy,
+  type FilterDisposition,
+  type FilterRule,
   type Rule,
   type RuleAction,
+  type RuleTarget,
 } from "@/rules/types";
 
 const toOptions = <F extends string>(
@@ -47,13 +51,14 @@ const toOptions = <F extends string>(
   specs: Record<F, { label: string }>,
 ) => fields.map((f) => ({ value: f, label: specs[f].label }));
 
-const TARGET_OPTIONS: { value: RecordTarget; label: string }[] = [
+const TARGET_OPTIONS: { value: RuleTarget; label: string }[] = [
   { value: "leg", label: "Flight legs (Type 3)" },
   { value: "header", label: "Carrier header (Type 2)" },
   { value: "segment", label: "Segment data (Type 4)" },
+  { value: "filter", label: "Leg filter (keep / remove)" },
 ];
 
-function switchTarget(rule: Rule, target: RecordTarget): Rule {
+function switchTarget(rule: Rule, target: RuleTarget): Rule {
   if (rule.target === target) return rule;
   const base = { id: rule.id, name: rule.name, enabled: rule.enabled };
   if (target === "header")
@@ -63,6 +68,8 @@ function switchTarget(rule: Rule, target: RecordTarget): Rule {
       conditions: [{ field: "airline", op: "equals", value: "" }],
       actions: [],
     };
+  if (target === "filter")
+    return { ...base, target: "filter", disposition: "remove", filterBy: "route", values: [] };
   // segment rules match legs — only the actions differ
   return {
     ...base,
@@ -71,6 +78,26 @@ function switchTarget(rule: Rule, target: RecordTarget): Rule {
     actions: [],
   };
 }
+
+const DISPOSITION_OPTIONS: { value: FilterDisposition; label: string }[] = [
+  { value: "remove", label: "Remove matching legs" },
+  { value: "keep", label: "Keep only matching legs" },
+];
+
+const FILTER_BY_OPTIONS: { value: FilterBy; label: string }[] = [
+  { value: "route", label: "Route (origin–destination)" },
+  { value: "flightNumber", label: "Flight number" },
+];
+
+/** Split the comma-separated values input into a clean, de-duped, upper-cased list. */
+const parseFilterValues = (text: string): string[] => [
+  ...new Set(
+    text
+      .split(",")
+      .map((v) => v.trim().toUpperCase())
+      .filter(Boolean),
+  ),
+];
 
 const OP_OPTIONS: { value: ConditionOp; label: string }[] = [
   { value: "equals", label: "is" },
@@ -271,6 +298,14 @@ function PresetManager({
 }
 
 function validate(rule: Rule): string | null {
+  if (rule.target === "filter") {
+    if (rule.values.length === 0) return "Add at least one filter value.";
+    if (rule.filterBy === "route") {
+      const bad = rule.values.find((v) => !ROUTE_PAIR_RE.test(v));
+      if (bad) return `"${bad}" isn't a valid route pair — use e.g. "JFK-LAX".`;
+    }
+    return null;
+  }
   if (rule.actions.length === 0) return "Add at least one action.";
   for (const c of rule.conditions) {
     if (!c.value.trim() && !VALUELESS_OPS.includes(c.op))
@@ -291,6 +326,64 @@ function validate(rule: Rule): string | null {
   return null;
 }
 
+/** Editor body for a filter rule: a disposition, a dimension, and one value list. */
+function FilterBody({
+  rule,
+  valuesText,
+  onValuesText,
+  onFilter,
+}: {
+  rule: FilterRule;
+  valuesText: string;
+  onValuesText: (text: string) => void;
+  onFilter: (patch: Partial<FilterRule>) => void;
+}) {
+  const isRoute = rule.filterBy === "route";
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <span className="w-20 shrink-0 text-sm text-muted-foreground">Action</span>
+        <Picker
+          value={rule.disposition}
+          onChange={(disposition) => onFilter({ disposition })}
+          options={DISPOSITION_OPTIONS}
+          className="w-64"
+        />
+      </div>
+      <p className="pl-1 text-sm text-muted-foreground">
+        {rule.disposition === "remove"
+          ? "Legs matching the filter below are removed from the exported file; all others are kept."
+          : "Only legs matching the filter below are kept; every other leg is removed from the exported file."}
+      </p>
+      <div className="flex items-center gap-2">
+        <span className="w-20 shrink-0 text-sm text-muted-foreground">Filter by</span>
+        <Picker
+          value={rule.filterBy}
+          onChange={(filterBy) => onFilter({ filterBy })}
+          options={FILTER_BY_OPTIONS}
+          className="w-64"
+        />
+      </div>
+      <section className="flex flex-col gap-2">
+        <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
+          {isRoute ? "Route pairs" : "Flight numbers"}
+        </h3>
+        <Input
+          className="h-8 font-mono text-sm"
+          value={valuesText}
+          onChange={(e) => onValuesText(e.target.value)}
+          placeholder={isRoute ? "JFK-LAX, EWR-SFO" : "123, 456, 1408"}
+        />
+        <p className="pl-1 text-xs text-muted-foreground">
+          {isRoute
+            ? "Comma-separated origin–destination pairs, matched on each leg's departure and arrival stations."
+            : "Comma-separated flight numbers, matched on each leg."}
+        </p>
+      </section>
+    </div>
+  );
+}
+
 export function RuleEditor({
   initial,
   onSave,
@@ -304,6 +397,11 @@ export function RuleEditor({
   const [error, setError] = useState<string | null>(null);
   const [presets, setPresetsState] = useState<Preset[]>(loadPresets);
   const [managingPresets, setManagingPresets] = useState(false);
+  // Filter values are edited as free text so a trailing comma survives typing;
+  // they are parsed into the rule's list on save.
+  const [valuesText, setValuesText] = useState(
+    initial.target === "filter" ? initial.values.join(", ") : "",
+  );
 
   const setPresets = (next: Preset[]) => {
     setPresetsState(next);
@@ -314,22 +412,35 @@ export function RuleEditor({
     field === "trafficRestriction" &&
     ["equals", "notEquals", "setValue"].includes(opOrKind);
 
+  const setFilter = (patch: Partial<FilterRule>) =>
+    setRule((r) => (r.target === "filter" ? { ...r, ...patch } : r));
+
   // Field/op validity per target is enforced by the option lists the pickers
   // offer below, so a same-shape cast here is safe — TS can't otherwise
-  // narrow a patch's field type against a union-typed `r` inside .map().
+  // narrow a patch's field type against a union-typed `r` inside .map(). The
+  // filter guard is unreachable from the UI (these run only for non-filter
+  // rules) but keeps the union access well-typed.
   const setCondition = (i: number, patch: Partial<Condition<LegField | HeaderField>>) =>
-    setRule((r) => ({
-      ...r,
-      conditions: r.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)),
-    }) as Rule);
+    setRule((r) =>
+      r.target === "filter"
+        ? r
+        : ({
+            ...r,
+            conditions: r.conditions.map((c, j) => (j === i ? { ...c, ...patch } : c)),
+          } as Rule),
+    );
   const setAction = (
     i: number,
     patch: Partial<RuleAction<LegField | HeaderField | SegmentField>>,
   ) =>
-    setRule((r) => ({
-      ...r,
-      actions: r.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)),
-    }) as Rule);
+    setRule((r) =>
+      r.target === "filter"
+        ? r
+        : ({
+            ...r,
+            actions: r.actions.map((a, j) => (j === i ? { ...a, ...patch } : a)),
+          } as Rule),
+    );
 
   const conditionFieldOptions =
     rule.target === "header"
@@ -353,9 +464,13 @@ export function RuleEditor({
       : KIND_OPTIONS;
 
   const save = () => {
-    const problem = validate(rule);
+    const finalRule: Rule =
+      rule.target === "filter"
+        ? { ...rule, values: parseFilterValues(valuesText) }
+        : rule;
+    const problem = validate(finalRule);
     if (problem) return setError(problem);
-    onSave({ ...rule, name: rule.name.trim() || "Untitled rule" });
+    onSave({ ...finalRule, name: finalRule.name.trim() || "Untitled rule" });
   };
 
   return (
@@ -379,12 +494,24 @@ export function RuleEditor({
             <span className="text-sm text-muted-foreground">Applies to</span>
             <Picker
               value={rule.target}
-              onChange={(target) => setRule((r) => switchTarget(r, target))}
+              onChange={(target) => {
+                if (target === "filter") setValuesText("");
+                setRule((r) => switchTarget(r, target));
+              }}
               options={TARGET_OPTIONS}
               className="w-56"
             />
           </div>
 
+          {rule.target === "filter" ? (
+            <FilterBody
+              rule={rule}
+              valuesText={valuesText}
+              onValuesText={setValuesText}
+              onFilter={setFilter}
+            />
+          ) : (
+          <>
           <section className="flex flex-col gap-2">
             <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
               If every condition matches
@@ -448,10 +575,14 @@ export function RuleEditor({
                   size="icon-sm"
                   aria-label="Remove condition"
                   onClick={() =>
-                    setRule((r) => ({
-                      ...r,
-                      conditions: r.conditions.filter((_, j) => j !== i),
-                    }) as Rule)
+                    setRule((r) =>
+                      r.target === "filter"
+                        ? r
+                        : ({
+                            ...r,
+                            conditions: r.conditions.filter((_, j) => j !== i),
+                          } as Rule),
+                    )
                   }
                 >
                   <Trash2 />
@@ -463,15 +594,19 @@ export function RuleEditor({
               size="xs"
               className="self-start"
               onClick={() =>
-                setRule((r) => ({
-                  ...r,
-                  conditions: [
-                    ...r.conditions,
-                    r.target === "header"
-                      ? { field: "airline", op: "equals", value: "" }
-                      : { field: "depStation", op: "equals", value: "" },
-                  ],
-                }) as Rule)
+                setRule((r) =>
+                  r.target === "filter"
+                    ? r
+                    : ({
+                        ...r,
+                        conditions: [
+                          ...r.conditions,
+                          r.target === "header"
+                            ? { field: "airline", op: "equals", value: "" }
+                            : { field: "depStation", op: "equals", value: "" },
+                        ],
+                      } as Rule),
+                )
               }
             >
               <Plus /> Add condition
@@ -516,10 +651,14 @@ export function RuleEditor({
                   size="icon-sm"
                   aria-label="Remove action"
                   onClick={() =>
-                    setRule((r) => ({
-                      ...r,
-                      actions: r.actions.filter((_, j) => j !== i),
-                    }) as Rule)
+                    setRule((r) =>
+                      r.target === "filter"
+                        ? r
+                        : ({
+                            ...r,
+                            actions: r.actions.filter((_, j) => j !== i),
+                          } as Rule),
+                    )
                   }
                 >
                   <Trash2 />
@@ -531,22 +670,28 @@ export function RuleEditor({
               size="xs"
               className="self-start"
               onClick={() =>
-                setRule((r) => ({
-                  ...r,
-                  actions: [
-                    ...r.actions,
-                    r.target === "header"
-                      ? { field: "airline", kind: "setValue", value: "" }
-                      : r.target === "segment"
-                        ? { field: "eticket", kind: "setValue", value: "ET" }
-                        : { field: "aircraftType", kind: "setValue", value: "" },
-                  ],
-                }) as Rule)
+                setRule((r) =>
+                  r.target === "filter"
+                    ? r
+                    : ({
+                        ...r,
+                        actions: [
+                          ...r.actions,
+                          r.target === "header"
+                            ? { field: "airline", kind: "setValue", value: "" }
+                            : r.target === "segment"
+                              ? { field: "eticket", kind: "setValue", value: "ET" }
+                              : { field: "aircraftType", kind: "setValue", value: "" },
+                        ],
+                      } as Rule),
+                )
               }
             >
               <Plus /> Add action
             </Button>
           </section>
+          </>
+          )}
 
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

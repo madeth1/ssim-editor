@@ -23,6 +23,7 @@ import {
 import type {
   Change,
   Condition,
+  FilterRule,
   HeaderRule,
   LegRule,
   Rule,
@@ -97,6 +98,17 @@ function matchesHeader(
   return matchesBasic(headerField(header, cond.field), cond) ?? false;
 }
 
+/** The text a filter rule matches a leg on, for its `values` list and change log. */
+function filterSubject(leg: FlightLeg, rule: FilterRule): string {
+  return rule.filterBy === "route"
+    ? `${legField(leg, "depStation")}-${legField(leg, "arrStation")}`
+    : legField(leg, "flightNumber");
+}
+
+function matchesFilter(leg: FlightLeg, rule: FilterRule): boolean {
+  return rule.values.includes(filterSubject(leg, rule));
+}
+
 // values are stored trimmed (see parse.ts), so results are trimmed to match
 function applyAction<F extends string>(
   before: string,
@@ -124,10 +136,13 @@ export function applyRules(
   headers: HeaderRecord[];
   segments: SegmentRecord[];
   changes: Change[];
+  /** line indices of legs a filter rule drops — the serializer removes these */
+  removedLines: Set<number>;
 } {
   const legRules = rules.filter((r): r is LegRule => r.target === "leg");
   const headerRules = rules.filter((r): r is HeaderRule => r.target === "header");
   const segmentRules = rules.filter((r): r is SegmentRule => r.target === "segment");
+  const filterRules = rules.filter((r): r is FilterRule => r.target === "filter");
 
   const legChanges: Change[] = [];
   const outLegs = legs.map((orig) => {
@@ -203,12 +218,56 @@ export function applyRules(
     return header;
   });
 
+  // Filter rules drop whole legs. They fold over a surviving set — a leg dropped
+  // by an earlier rule leaves the set, so it is neither re-tested nor counted
+  // twice. "keep" removes every leg that does not match; "remove" every leg that
+  // does. The removed line indices drive both the preview and the serializer.
+  const removedLines = new Set<number>();
+  const filterChanges: Change[] = [];
+  let surviving = outLegs;
+  for (const rule of filterRules) {
+    if (!rule.enabled) continue;
+    const next: FlightLeg[] = [];
+    let kept = 0;
+    const dropped: FlightLeg[] = [];
+    for (const leg of surviving) {
+      const match = matchesFilter(leg, rule);
+      const drop = rule.disposition === "keep" ? !match : match;
+      if (drop) dropped.push(leg);
+      else {
+        next.push(leg);
+        kept++;
+      }
+    }
+    // a rule that empties the file is almost always a mistake — surface it
+    const warning =
+      kept === 0 && dropped.length > 0
+        ? "this rule removes every remaining leg — fix before exporting"
+        : undefined;
+    for (const leg of dropped) {
+      removedLines.add(leg.lineIndex);
+      filterChanges.push({
+        target: "filter",
+        lineIndex: leg.lineIndex,
+        disposition: rule.disposition,
+        before: filterSubject(leg, rule),
+        after: "(removed)",
+        ruleId: rule.id,
+        ruleName: rule.name,
+        warning,
+      });
+    }
+    surviving = next;
+  }
+
   // Segment records are derived from the *applied* legs, so a leg rule that
-  // rewrites a station is reflected in the Type 4 record built from it.
+  // rewrites a station is reflected in the Type 4 record built from it. A leg a
+  // filter rule is dropping gets no new record — it will not be in the output.
   const segments: SegmentRecord[] = [];
   const segmentChanges: Change[] = [];
   const emitted = new Set(existingSegments?.keys);
   for (const leg of outLegs) {
+    if (removedLines.has(leg.lineIndex)) continue;
     for (const rule of segmentRules) {
       if (!rule.enabled) continue;
       if (!rule.conditions.every((c) => matchesLeg(leg, c))) continue;
@@ -260,6 +319,7 @@ export function applyRules(
     legs: outLegs,
     headers: outHeaders,
     segments,
-    changes: [...legChanges, ...headerChanges, ...segmentChanges],
+    changes: [...legChanges, ...headerChanges, ...segmentChanges, ...filterChanges],
+    removedLines,
   };
 }

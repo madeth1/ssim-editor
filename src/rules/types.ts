@@ -1,4 +1,9 @@
-import type { HeaderField, LegField, SegmentField } from "../ssim/types";
+import type {
+  HeaderField,
+  LegField,
+  RecordTarget,
+  SegmentField,
+} from "../ssim/types";
 
 export const CONDITION_OPS = [
   "equals",
@@ -96,7 +101,36 @@ export interface SegmentRule extends RuleBase {
   actions: RuleAction<SegmentField>[];
 }
 
-export type Rule = LegRule | HeaderRule | SegmentRule;
+/** keep: drop every leg that does NOT match. remove: drop every leg that does. */
+export const FILTER_DISPOSITIONS = ["keep", "remove"] as const;
+export type FilterDisposition = (typeof FILTER_DISPOSITIONS)[number];
+
+/** The one filter dimension a rule targets — route pairs or flight numbers. */
+export const FILTER_BYS = ["route", "flightNumber"] as const;
+export type FilterBy = (typeof FILTER_BYS)[number];
+
+/** A valid route-pair value: two 3-letter station codes, e.g. "JFK-LAX". */
+export const ROUTE_PAIR_RE = /^[A-Z]{3}-[A-Z]{3}$/;
+
+/**
+ * Drops whole flight-leg records rather than editing fields. A leg "matches" when
+ * its route (`depStation-arrStation`) or flight number is in `values`; the
+ * disposition then decides whether matching or non-matching legs are removed.
+ * Unlike the other rules this changes which lines exist in the output, so the
+ * engine reports it as removed line indices and the serializer renumbers.
+ */
+export interface FilterRule extends RuleBase {
+  target: "filter";
+  disposition: FilterDisposition;
+  filterBy: FilterBy;
+  /** route pairs like "JFK-LAX" (upper-cased) or flight numbers like "123" */
+  values: string[];
+}
+
+export type Rule = LegRule | HeaderRule | SegmentRule | FilterRule;
+
+/** A rule targets an SSIM record kind, or the synthetic "filter" disposition. */
+export type RuleTarget = RecordTarget | "filter";
 
 interface ChangeBase {
   lineIndex: number;
@@ -124,4 +158,11 @@ export interface SegmentChange extends ChangeBase {
   field: SegmentField;
 }
 
-export type Change = LegChange | HeaderChange | SegmentChange;
+/** A whole leg dropped from the output — no `field`, it removes a record.
+ *  `before` holds the matched route/flight text, `after` is "(removed)". */
+export interface FilterChange extends ChangeBase {
+  target: "filter";
+  disposition: FilterDisposition;
+}
+
+export type Change = LegChange | HeaderChange | SegmentChange | FilterChange;

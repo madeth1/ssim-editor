@@ -4,7 +4,7 @@ import { headerField, legField } from "../ssim/types";
 import { DEFAULT_LEG, makeLegLine, makeSampleSsim } from "../ssim/fixture";
 import { legIdentityOfLine, segmentKey, type ExistingSegments } from "../ssim/segment";
 import { applyRules, parseSsimDate } from "./engine";
-import type { HeaderRule, LegRule, Rule, SegmentRule } from "./types";
+import type { FilterRule, HeaderRule, LegRule, Rule, SegmentRule } from "./types";
 
 const legs = () => parseSsim(makeSampleSsim()).legs;
 const headers = () => parseSsim(makeSampleSsim()).headers;
@@ -30,7 +30,7 @@ const headerRule = (over: Partial<HeaderRule>): Rule => ({
 });
 
 describe("conditions", () => {
-  const cases: [string, Rule["conditions"], number][] = [
+  const cases: [string, LegRule["conditions"], number][] = [
     ["equals", [{ field: "depStation", op: "equals", value: "FCO" }], 3],
     ["notEquals", [{ field: "airline", op: "notEquals", value: "XX" }], 1],
     ["oneOf", [{ field: "arrStation", op: "oneOf", value: "LIN, CTA" }], 2],
@@ -350,6 +350,96 @@ describe("segment rules", () => {
       rule({ actions: [{ field: "aircraftType", kind: "setValue", value: "32Q" }] }),
     ]);
     expect(segments).toEqual([]);
+  });
+});
+
+// Sample legs (by index): 0 XX1002 FCO-LIN · 1 XX1003 LIN-FCO ·
+// 2 XX1408 FCO-CTA · 3 YY0610 FCO-JFK.
+describe("filter rules", () => {
+  const filterRule = (over: Partial<FilterRule>): FilterRule => ({
+    id: "f1",
+    name: "filter",
+    enabled: true,
+    target: "filter",
+    disposition: "remove",
+    filterBy: "route",
+    values: [],
+    ...over,
+  });
+  const line = (i: number) => legs()[i].lineIndex;
+
+  it("remove drops legs matching a route pair, keeps the rest", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ disposition: "remove", filterBy: "route", values: ["FCO-JFK"] }),
+    ]);
+    expect([...r.removedLines]).toEqual([line(3)]);
+    expect(r.legs).toHaveLength(4); // engine still returns every leg 1:1
+  });
+
+  it("keep drops every leg not on a listed route", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ disposition: "keep", filterBy: "route", values: ["FCO-JFK"] }),
+    ]);
+    expect(r.removedLines.size).toBe(3);
+    expect(r.removedLines.has(line(3))).toBe(false);
+  });
+
+  it("matches per leg, not itinerary — FCO-CTA touches only that leg", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ filterBy: "route", values: ["FCO-CTA"] }),
+    ]);
+    expect([...r.removedLines]).toEqual([line(2)]);
+  });
+
+  it("filters by flight number", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ filterBy: "flightNumber", values: ["1408"] }),
+    ]);
+    expect([...r.removedLines]).toEqual([line(2)]);
+  });
+
+  it("applies filter rules sequentially over the survivors", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ id: "a", disposition: "remove", filterBy: "flightNumber", values: ["1002"] }),
+      filterRule({ id: "b", disposition: "keep", filterBy: "route", values: ["LIN-FCO"] }),
+    ]);
+    // a drops leg0; b then keeps only LIN-FCO (leg1), dropping legs 2 and 3
+    expect(r.removedLines.size).toBe(3);
+    expect(r.removedLines.has(line(1))).toBe(false);
+  });
+
+  it("warns when a rule removes every remaining leg", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ disposition: "keep", filterBy: "route", values: ["ZZZ-ZZZ"] }),
+    ]);
+    expect(r.removedLines.size).toBe(4);
+    expect(r.changes.every((c) => c.warning)).toBe(true);
+  });
+
+  it("a disabled filter rule drops nothing", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ enabled: false, values: ["FCO-JFK"] }),
+    ]);
+    expect(r.removedLines.size).toBe(0);
+    expect(r.changes).toHaveLength(0);
+  });
+
+  it("does not author a segment record for a leg a filter removes", () => {
+    const seg: SegmentRule = {
+      id: "s",
+      name: "seg",
+      enabled: true,
+      target: "segment",
+      conditions: [{ field: "depStation", op: "equals", value: "FCO" }],
+      actions: [{ field: "eticket", kind: "setValue", value: "ET" }],
+    };
+    const r = applyRules(legs(), headers(), [
+      seg,
+      filterRule({ disposition: "remove", filterBy: "route", values: ["FCO-JFK"] }),
+    ]);
+    // FCO departures are legs 0, 2, 3; leg 3 is removed, so only 0 and 2 get records
+    expect(r.segments).toHaveLength(2);
+    expect(r.segments.some((s) => s.afterLineIndex === line(3))).toBe(false);
   });
 });
 

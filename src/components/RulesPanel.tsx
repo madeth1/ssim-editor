@@ -12,10 +12,15 @@ import { Switch } from "@/components/ui/switch";
 import { RuleEditor } from "@/components/RuleEditor";
 import { pickAndReadJson, saveJsonAs } from "@/lib/file-io";
 import { parseRulesJson } from "@/rules/storage";
-import type { Rule } from "@/rules/types";
+import type { Rule, RuleTarget } from "@/rules/types";
 import { fieldSpec, type RecordTarget } from "@/ssim/types";
 
 function summarize(rule: Rule): string {
+  if (rule.target === "filter") {
+    const dim = rule.filterBy === "route" ? "route" : "flight";
+    const list = rule.values.join(", ") || "⚠ no values";
+    return `${rule.disposition} · ${dim} · ${list}`;
+  }
   const OP_TEXT: Partial<Record<string, string>> = {
     notEquals: "≠",
     isBlank: "is blank",
@@ -150,6 +155,7 @@ export function RulesPanel({
   const legRules = rules.filter((r) => r.target === "leg");
   const headerRules = rules.filter((r) => r.target === "header");
   const segmentRules = rules.filter((r) => r.target === "segment");
+  const filterRules = rules.filter((r) => r.target === "filter");
 
   const toggle = (rule: Rule, enabled: boolean) =>
     onChange(rules.map((r) => (r.id === rule.id ? { ...r, enabled } : r)));
@@ -159,7 +165,7 @@ export function RulesPanel({
 
   // Reorders within a target group only — groups never interact at
   // execution time, so cross-group order carries no meaning.
-  const move = (target: RecordTarget, groupIndex: number, dir: -1 | 1) => {
+  const move = (target: RuleTarget, groupIndex: number, dir: -1 | 1) => {
     const indices = rules.reduce<number[]>(
       (acc, r, i) => (r.target === target ? [...acc, i] : acc),
       [],
@@ -241,6 +247,14 @@ export function RulesPanel({
           title="Segment Data Record"
           rules={segmentRules}
           onMove={(i, dir) => move("segment", i, dir)}
+          onToggle={toggle}
+          onEdit={setEditing}
+          onDelete={remove}
+        />
+        <RuleGroup
+          title="Leg Filter (Keep / Remove)"
+          rules={filterRules}
+          onMove={(i, dir) => move("filter", i, dir)}
           onToggle={toggle}
           onEdit={setEditing}
           onDelete={remove}
