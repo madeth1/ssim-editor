@@ -17,7 +17,7 @@ import { fieldSpec, type RecordTarget } from "@/ssim/types";
 
 function summarize(rule: Rule): string {
   if (rule.target === "filter") {
-    const dim = rule.filterBy === "route" ? "route" : "flight";
+    const dim = { route: "route", flightNumber: "flight", trafficRestriction: "restriction" }[rule.filterBy];
     const list = rule.values.join(", ") || "⚠ no values";
     return `${rule.disposition} · ${dim} · ${list}`;
   }
@@ -37,6 +37,8 @@ function summarize(rule: Rule): string {
         : `${fieldSpec(conditionTarget, c.field).label} ${OP_TEXT[c.op] ?? ""} ${c.value}`.trim(),
     )
     .join(" · ");
+  if (rule.target === "leg" && rule.actions.length === 0)
+    return `keep only · ${conds}`;
   if (conds) return conds;
   if (rule.target === "segment") return "⚠ adds a record to all legs";
   return `⚠ modifies all ${rule.target === "header" ? "carrier headers" : "legs"}`;

@@ -100,9 +100,9 @@ function matchesHeader(
 
 /** The text a filter rule matches a leg on, for its `values` list and change log. */
 function filterSubject(leg: FlightLeg, rule: FilterRule): string {
-  return rule.filterBy === "route"
-    ? `${legField(leg, "depStation")}-${legField(leg, "arrStation")}`
-    : legField(leg, "flightNumber");
+  if (rule.filterBy === "route")
+    return `${legField(leg, "depStation")}-${legField(leg, "arrStation")}`;
+  return legField(leg, rule.filterBy);
 }
 
 function matchesFilter(leg: FlightLeg, rule: FilterRule): boolean {
@@ -145,12 +145,31 @@ export function applyRules(
   const filterRules = rules.filter((r): r is FilterRule => r.target === "filter");
 
   const legChanges: Change[] = [];
+  const removedLines = new Set<number>();
+  const filterChanges: Change[] = [];
   const outLegs = legs.map((orig) => {
     let leg = orig;
     for (const rule of legRules) {
       if (!rule.enabled) continue;
       // no conditions = apply to every leg
-      if (!rule.conditions.every((c) => matchesLeg(leg, c))) continue;
+      const match = rule.conditions.every((c) => matchesLeg(leg, c));
+      // no actions = a filter: keep only the legs the conditions match. Rules
+      // run in order, so several action-less rules narrow the file together.
+      if (rule.actions.length === 0) {
+        if (match) continue;
+        removedLines.add(leg.lineIndex);
+        filterChanges.push({
+          target: "filter",
+          lineIndex: leg.lineIndex,
+          disposition: "keep",
+          before: `${legField(leg, "depStation")}-${legField(leg, "arrStation")}`,
+          after: "(removed)",
+          ruleId: rule.id,
+          ruleName: rule.name,
+        });
+        break; // a dropped leg takes no further edits
+      }
+      if (!match) continue;
       for (const action of rule.actions) {
         const before = legField(leg, action.field);
         const after = applyAction(before, action);
@@ -218,13 +237,16 @@ export function applyRules(
     return header;
   });
 
+  // same guard the filter rules below apply: emptying the file is a mistake
+  if (legs.length > 0 && removedLines.size === legs.length)
+    for (const c of filterChanges)
+      c.warning = "conditions-only rules remove every leg — fix before exporting";
+
   // Filter rules drop whole legs. They fold over a surviving set — a leg dropped
   // by an earlier rule leaves the set, so it is neither re-tested nor counted
   // twice. "keep" removes every leg that does not match; "remove" every leg that
   // does. The removed line indices drive both the preview and the serializer.
-  const removedLines = new Set<number>();
-  const filterChanges: Change[] = [];
-  let surviving = outLegs;
+  let surviving = outLegs.filter((l) => !removedLines.has(l.lineIndex));
   for (const rule of filterRules) {
     if (!rule.enabled) continue;
     const next: FlightLeg[] = [];

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseSsim } from "../ssim/parse";
+import { serializeSsim } from "../ssim/serialize";
 import { headerField, legField } from "../ssim/types";
 import { DEFAULT_LEG, makeLegLine, makeSampleSsim } from "../ssim/fixture";
 import { legIdentityOfLine, segmentKey, type ExistingSegments } from "../ssim/segment";
@@ -398,6 +399,14 @@ describe("filter rules", () => {
     expect([...r.removedLines]).toEqual([line(2)]);
   });
 
+  it("filters by traffic restriction", () => {
+    const r = applyRules(legs(), headers(), [
+      filterRule({ filterBy: "trafficRestriction", values: ["A"] }),
+    ]);
+    expect(r.removedLines.size).toBe(1);
+    expect(r.changes[0].before).toBe("A");
+  });
+
   it("applies filter rules sequentially over the survivors", () => {
     const r = applyRules(legs(), headers(), [
       filterRule({ id: "a", disposition: "remove", filterBy: "flightNumber", values: ["1002"] }),
@@ -440,6 +449,43 @@ describe("filter rules", () => {
     // FCO departures are legs 0, 2, 3; leg 3 is removed, so only 0 and 2 get records
     expect(r.segments).toHaveLength(2);
     expect(r.segments.some((s) => s.afterLineIndex === line(3))).toBe(false);
+  });
+});
+
+describe("leg rules without actions", () => {
+  it("keep only matching legs, narrowing across rules", () => {
+    const { removedLines, changes, legs: out } = applyRules(legs(), headers(), [
+      rule({ id: "a", conditions: [{ field: "depStation", op: "equals", value: "FCO" }] }),
+      rule({ id: "b", conditions: [{ field: "arrStation", op: "oneOf", value: "LIN, CTA" }] }),
+    ]);
+    const kept = out.filter((l) => !removedLines.has(l.lineIndex));
+    expect(kept.length).toBeGreaterThan(0);
+    for (const l of kept) {
+      expect(legField(l, "depStation")).toBe("FCO");
+      expect(["LIN", "CTA"]).toContain(legField(l, "arrStation"));
+    }
+    expect(changes.every((c) => c.target === "filter" && !c.warning)).toBe(true);
+    expect(changes).toHaveLength(removedLines.size); // each leg dropped once
+  });
+
+  it("exports only the legs that pass the filters", () => {
+    const file = parseSsim(makeSampleSsim());
+    const out = applyRules(file.legs, file.headers, [
+      rule({ conditions: [{ field: "depStation", op: "equals", value: "FCO" }] }),
+    ], file.existingSegments);
+    const exported = parseSsim(
+      serializeSsim(file, out.legs, out.headers, out.segments, out.removedLines),
+    ).legs;
+    expect(exported).toHaveLength(3);
+    expect(exported.every((l) => legField(l, "depStation") === "FCO")).toBe(true);
+  });
+
+  it("warns when nothing survives", () => {
+    const { changes } = applyRules(legs(), headers(), [
+      rule({ conditions: [{ field: "depStation", op: "equals", value: "ZZZ" }] }),
+    ]);
+    expect(changes).toHaveLength(4);
+    expect(changes.every((c) => c.warning)).toBe(true);
   });
 });
 
