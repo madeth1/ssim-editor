@@ -26,7 +26,13 @@ import {
     type LegField,
     type SegmentField,
 } from "@/ssim/types";
-import { loadPresets, savePresets, type Preset } from "@/rules/presets";
+import {
+    loadPresets,
+    PRESET_FIELDS,
+    savePresets,
+    type Preset,
+    type PresetField,
+} from "@/rules/presets";
 import {
     HEADER_ACTION_FIELDS,
     HEADER_CONDITION_FIELDS,
@@ -35,6 +41,7 @@ import {
     LEG_CONDITION_FIELDS,
     ROUTE_PAIR_RE,
     SEGMENT_ACTION_FIELDS,
+    SINGLE_LETTER_RE,
     type ActionKind,
     type Condition,
     type ConditionOp,
@@ -144,6 +151,8 @@ const KIND_OPTIONS: { value: ActionKind; label: string }[] = [
     { value: "setValue", label: "set to" },
     { value: "replaceText", label: "replace text" },
 ];
+const SET_ONLY = KIND_OPTIONS.filter((o) => o.value === "setValue");
+
 
 const DAY_OPTIONS = [
     "Monday",
@@ -242,10 +251,12 @@ function PresetPicker({
 }
 
 function PresetManager({
+    field,
     presets,
     onChange,
     onClose,
 }: {
+    field: PresetField;
     presets: Preset[];
     onChange: (presets: Preset[]) => void;
     onClose: () => void;
@@ -253,10 +264,17 @@ function PresetManager({
     const [code, setCode] = useState("");
     const [label, setLabel] = useState("");
 
+    const codeError = !code
+        ? null
+        : !SINGLE_LETTER_RE.test(code)
+          ? "Code must be a single letter (A–Z)."
+          : presets.some((p) => p.value === code)
+            ? `${code} is already in the list.`
+            : null;
+
     const add = () => {
-        const v = code.trim().toUpperCase();
-        if (!v || presets.some((p) => p.value === v)) return;
-        onChange([...presets, { value: v, label: label.trim() || v }]);
+        if (!code || codeError) return;
+        onChange([...presets, { value: code, label: label.trim() || code }]);
         setCode("");
         setLabel("");
     };
@@ -265,7 +283,7 @@ function PresetManager({
         <Dialog open onOpenChange={(open) => !open && onClose()}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Traffic restriction values</DialogTitle>
+                    <DialogTitle>{LEG_FIELDS[field].label} values</DialogTitle>
                 </DialogHeader>
                 <div className="flex flex-col gap-1.5">
                     {presets.length === 0 && (
@@ -309,28 +327,32 @@ function PresetManager({
                     >
                         <Input
                             value={code}
-                            onChange={(e) => setCode(e.target.value)}
+                            onChange={(e) =>
+                                setCode(e.target.value.trim().toUpperCase())
+                            }
                             placeholder="Code"
                             className="h-7 w-20 font-mono text-sm"
-                            maxLength={fieldMaxLength(
-                                LEG_FIELDS.trafficRestriction,
-                            )}
+                            maxLength={1}
+                            aria-invalid={!!codeError}
                         />
                         <Input
                             value={label}
                             onChange={(e) => setLabel(e.target.value)}
-                            placeholder="Description, e.g. Connecting Traffic Only"
+                            placeholder="Description"
                             className="h-7 flex-1 text-sm"
                         />
                         <Button
                             type="submit"
                             variant="outline"
                             size="sm"
-                            disabled={!code.trim()}
+                            disabled={!code || !!codeError}
                         >
                             <Plus /> Add
                         </Button>
                     </form>
+                    {codeError && (
+                        <p className="text-xs text-destructive">{codeError}</p>
+                    )}
                 </div>
                 <DialogFooter showCloseButton />
             </DialogContent>
@@ -371,6 +393,8 @@ function validate(rule: Rule): string | null {
             return 'Replace text needs the form "old=>new" with a non-empty "old".';
         if (a.kind === "setValue" && !a.value.trim())
             return "Every action needs a value.";
+        if (a.field === "serviceType" && !SINGLE_LETTER_RE.test(a.value.trim()))
+            return "Service type must be a single uppercase letter.";
     }
     return null;
 }
@@ -446,21 +470,30 @@ export function RuleEditor({
 }) {
     const [rule, setRule] = useState<Rule>(initial);
     const [error, setError] = useState<string | null>(null);
-    const [presets, setPresetsState] = useState<Preset[]>(loadPresets);
-    const [managingPresets, setManagingPresets] = useState(false);
+    const [presets, setPresetsState] = useState(
+        () =>
+            Object.fromEntries(
+                PRESET_FIELDS.map((f) => [f, loadPresets(f)]),
+            ) as Record<PresetField, Preset[]>,
+    );
+    const [managingPresets, setManagingPresets] =
+        useState<PresetField | null>(null);
     // Filter values are edited as free text so a trailing comma survives typing;
     // they are parsed into the rule's list on save.
     const [valuesText, setValuesText] = useState(
         initial.target === "filter" ? initial.values.join(", ") : "",
     );
 
-    const setPresets = (next: Preset[]) => {
-        setPresetsState(next);
-        savePresets(next);
+    const setPresets = (field: PresetField, next: Preset[]) => {
+        setPresetsState((p) => ({ ...p, [field]: next }));
+        savePresets(field, next);
     };
 
-    const usesPresets = (field: string, opOrKind: string) =>
-        field === "trafficRestriction" &&
+    const usesPresets = (
+        field: string,
+        opOrKind: string,
+    ): field is PresetField =>
+        PRESET_FIELDS.includes(field as PresetField) &&
         ["equals", "notEquals", "setValue"].includes(opOrKind);
 
     const setFilter = (patch: Partial<FilterRule>) =>
@@ -516,10 +549,7 @@ export function RuleEditor({
             : OP_OPTIONS;
     // a segment record doesn't exist until this rule creates it, so there is no
     // prior text to replace — only setValue makes sense
-    const kindOptions =
-        rule.target === "segment"
-            ? KIND_OPTIONS.filter((o) => o.value === "setValue")
-            : KIND_OPTIONS;
+    const kindOptions = rule.target === "segment" ? SET_ONLY : KIND_OPTIONS;
 
     const save = () => {
         const finalRule: Rule =
@@ -629,9 +659,9 @@ export function RuleEditor({
                                                 onChange={(value) =>
                                                     setCondition(i, { value })
                                                 }
-                                                presets={presets}
+                                                presets={presets[c.field]}
                                                 onManage={() =>
-                                                    setManagingPresets(true)
+                                                    setManagingPresets(c.field as PresetField)
                                                 }
                                             />
                                         ) : c.op === "operatesOnDay" ? (
@@ -731,7 +761,17 @@ export function RuleEditor({
                                         <Picker
                                             value={a.field}
                                             onChange={(field) =>
-                                                setAction(i, { field })
+                                                setAction(
+                                                    i,
+                                                    // service type is set-only
+                                                    field === "serviceType"
+                                                        ? {
+                                                              field,
+                                                              kind: "setValue",
+                                                              value: "",
+                                                          }
+                                                        : { field },
+                                                )
                                             }
                                             options={actionFieldOptions}
                                             className="w-40 shrink-0"
@@ -744,7 +784,11 @@ export function RuleEditor({
                                                     value: "",
                                                 })
                                             }
-                                            options={kindOptions}
+                                            options={
+                                                a.field === "serviceType"
+                                                    ? SET_ONLY
+                                                    : kindOptions
+                                            }
                                             className="w-36 shrink-0"
                                         />
                                         {usesPresets(a.field, a.kind) ? (
@@ -753,9 +797,9 @@ export function RuleEditor({
                                                 onChange={(value) =>
                                                     setAction(i, { value })
                                                 }
-                                                presets={presets}
+                                                presets={presets[a.field]}
                                                 onManage={() =>
-                                                    setManagingPresets(true)
+                                                    setManagingPresets(a.field as PresetField)
                                                 }
                                             />
                                         ) : (
@@ -849,9 +893,10 @@ export function RuleEditor({
 
                 {managingPresets && (
                     <PresetManager
-                        presets={presets}
-                        onChange={setPresets}
-                        onClose={() => setManagingPresets(false)}
+                        field={managingPresets}
+                        presets={presets[managingPresets]}
+                        onChange={(next) => setPresets(managingPresets, next)}
+                        onClose={() => setManagingPresets(null)}
                     />
                 )}
             </DialogContent>

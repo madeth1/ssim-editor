@@ -37,7 +37,11 @@ export const LEG_ACTION_FIELDS: LegField[] = [
     "prbd",
     "trafficRestriction",
     "salesConfig",
+    "serviceType",
 ];
+
+/** One uppercase letter: service type values and custom preset codes. */
+export const SINGLE_LETTER_RE = /^[A-Z]$/;
 
 /** Leg fields conditions may match on: targeting fields plus everything editable. */
 export const LEG_CONDITION_FIELDS: LegField[] = [

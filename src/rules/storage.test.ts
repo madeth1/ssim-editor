@@ -45,6 +45,14 @@ describe("parseRulesJson", () => {
     ).toThrow(/invalid action/);
   });
 
+  it("accepts service type only as set to one uppercase letter", () => {
+    const st = (kind: string, value: string) =>
+      `[{"actions": [{"field": "serviceType", "kind": "${kind}", "value": "${value}"}]}]`;
+    expect(ca(parseRulesJson(st("setValue", "C"))[0]).actions).toHaveLength(1);
+    for (const bad of [st("setValue", "c"), st("setValue", "CC"), st("setValue", "1"), st("replaceText", "J=>C")])
+      expect(() => parseRulesJson(bad)).toThrow(/invalid action/);
+  });
+
   it("rejects actions on condition-only fields", () => {
     expect(() =>
       parseRulesJson('[{"actions": [{"field": "depStation", "kind": "setValue", "value": "CIA"}]}]'),

@@ -11,6 +11,7 @@ import {
   LEG_CONDITION_FIELDS,
   ROUTE_PAIR_RE,
   SEGMENT_ACTION_FIELDS,
+  SINGLE_LETTER_RE,
   type FilterRule,
   type Rule,
   type RuleTarget,
@@ -74,7 +75,9 @@ export function parseRulesJson(json: string): Rule[] {
     const actionKinds: readonly string[] =
       target === "segment" ? ["setValue"] : ACTION_KINDS;
     for (const a of actions) {
-      if (!actionFields.includes(a?.field) || !actionKinds.includes(a?.kind) || typeof a?.value !== "string")
+      const serviceTypeOk =
+        a?.field !== "serviceType" || (a?.kind === "setValue" && SINGLE_LETTER_RE.test(a?.value?.trim?.()));
+      if (!actionFields.includes(a?.field) || !actionKinds.includes(a?.kind) || typeof a?.value !== "string" || !serviceTypeOk)
         throw new Error(`Rule "${name}" has an invalid action: ${JSON.stringify(a)}`);
     }
     return { id, name, enabled, target, conditions, actions } as Rule;

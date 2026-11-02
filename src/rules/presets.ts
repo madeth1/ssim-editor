@@ -3,21 +3,26 @@ export interface Preset {
   label: string;
 }
 
-// ponytail: single preset list for traffic restriction; generalize to a
-// per-field map only when a second field actually needs presets.
-const KEY = "ssim-editor.presets.trafficRestriction";
+const SEED = {
+  trafficRestriction: [{ value: "K", label: "Connecting Traffic Only" }],
+  serviceType: [{ value: "J", label: "Scheduled Passenger Normal Service" }],
+} satisfies Record<string, Preset[]>;
 
-const SEED: Preset[] = [{ value: "K", label: "Connecting Traffic Only" }];
+/** Leg fields whose values are picked from a user-maintained list. */
+export type PresetField = keyof typeof SEED;
+export const PRESET_FIELDS = Object.keys(SEED) as PresetField[];
 
-export function loadPresets(): Preset[] {
+const key = (field: PresetField) => `ssim-editor.presets.${field}`;
+
+export function loadPresets(field: PresetField): Preset[] {
   try {
-    const raw = localStorage.getItem(KEY);
-    return raw ? JSON.parse(raw) : SEED;
+    const raw = localStorage.getItem(key(field));
+    return raw ? JSON.parse(raw) : SEED[field];
   } catch {
-    return SEED;
+    return SEED[field];
   }
 }
 
-export function savePresets(presets: Preset[]): void {
-  localStorage.setItem(KEY, JSON.stringify(presets));
+export function savePresets(field: PresetField, presets: Preset[]): void {
+  localStorage.setItem(key(field), JSON.stringify(presets));
 }
