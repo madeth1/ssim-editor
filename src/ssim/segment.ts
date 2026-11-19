@@ -61,6 +61,12 @@ function legKeyOf(leg: FlightLeg): string {
  *  byte 28. (Type 3 byte 28 is the tail of Period of Operation, not this.) */
 const LEG_IVI_OVERFLOW = 127;
 
+/** An existing Type 4 line with bytes 2-14 copied from its (patched) leg line,
+ *  so a rule that edits a key field doesn't orphan the record. */
+export function rekeySegmentLine(segment: string, legLine: string): string {
+  return segment[0] + legLine.slice(LEG_KEY.start, LEG_KEY.end) + segment.slice(LEG_KEY.end);
+}
+
 /** Highest leg sequence a segment record can name: the off point indicator of
  *  leg 26 would be one past "Z". */
 const MAX_POINT_INDICATOR_LEG = 25;

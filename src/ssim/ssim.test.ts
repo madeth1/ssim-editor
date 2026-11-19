@@ -331,6 +331,25 @@ describe("filter removal", () => {
     expect(out).toHaveLength(3); // header, leg 1, trailer
   });
 
+  // §7.5.4: bytes 2-14 tie a Type 4 to its leg, and service type (byte 14) is
+  // editable — an existing record must follow its leg's new key or it orphans.
+  it("re-keys existing Type 4 records when a leg's key bytes change", () => {
+    const leg = makeLegLine(DEFAULT_LEG, 2);
+    const file = parseSsim(
+      [
+        makeHeaderLine({ airline: "XX" }),
+        leg,
+        makeSegmentLine({ legKey: leg.slice(1, 14), board: "FCO", off: "LIN" }, 3),
+        "5 XX".padEnd(194) + "000004",
+      ].join("\n") + "\n",
+    );
+    const legs = [{ ...file.legs[0], values: { serviceType: "C" } }];
+    const out = recordsOf(serializeSsim(file, legs, file.headers));
+    expect(out[1][13]).toBe("C");
+    expect(out[2].slice(1, 14)).toBe(out[1].slice(1, 14));
+    expect(out[2].slice(14)).toBe(file.lines[2].slice(14)); // rest untouched
+  });
+
   it("is byte-identical to the input when nothing is removed", () => {
     const file = parseSsim(sample);
     expect(serializeSsim(file, file.legs, file.headers, [], new Set())).toBe(sample);

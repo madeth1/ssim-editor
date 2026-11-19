@@ -1,4 +1,4 @@
-import type { SegmentRecord } from "./segment";
+import { rekeySegmentLine, type SegmentRecord } from "./segment";
 import {
   type FlightLeg,
   type HeaderField,
@@ -124,7 +124,11 @@ export function serializeSsim(
   let lines = [...file.lines];
   for (const leg of legs) {
     if (removedLines.has(leg.lineIndex)) continue; // dropping it — don't patch
-    if (leg.values) lines[leg.lineIndex] = patchLegLine(leg);
+    if (!leg.values) continue;
+    const patched = (lines[leg.lineIndex] = patchLegLine(leg));
+    // bytes 2-14 key the leg's Type 4 records (§7.5.4); keep them in step
+    for (const rec of file.existingSegments.byLeg.get(leg.lineIndex) ?? [])
+      lines[rec.lineIndex] = rekeySegmentLine(lines[rec.lineIndex], patched);
   }
   for (const header of headers) {
     if (header.values) lines[header.lineIndex] = patchHeaderLine(header);
