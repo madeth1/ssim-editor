@@ -350,6 +350,31 @@ describe("filter removal", () => {
     expect(out[2].slice(14)).toBe(file.lines[2].slice(14)); // rest untouched
   });
 
+  // Multi-leg flights are often written legs-first, then all Type 4s. Each record
+  // must follow the leg its key names, not whichever Type 3 happens to precede it.
+  it("re-keys grouped Type 4 records by key, not by position", () => {
+    const leg1 = makeLegLine({ ...DEFAULT_LEG, legSequence: "01" }, 2);
+    const leg2 = makeLegLine({ ...DEFAULT_LEG, legSequence: "02", depStation: "LIN", arrStation: "CTA" }, 3);
+    const file = parseSsim(
+      [
+        makeHeaderLine({ airline: "XX" }),
+        leg1,
+        leg2,
+        makeSegmentLine({ legKey: leg1.slice(1, 14), board: "FCO", off: "LIN" }, 4),
+        makeSegmentLine({ legKey: leg2.slice(1, 14), board: "LIN", off: "CTA", boardIndicator: "B", offIndicator: "C" }, 5),
+        "5 XX".padEnd(194) + "000006",
+      ].join("\n") + "\n",
+    );
+    const legs = [{ ...file.legs[0], values: { serviceType: "C" } }, file.legs[1]];
+    const out = recordsOf(serializeSsim(file, legs, file.headers));
+    expect(out[3].slice(1, 14)).toBe(out[1].slice(1, 14)); // leg 01's record followed it
+    expect(out[4]).toBe(file.lines[4]); // leg 02's record untouched
+
+    // dropping leg 01 takes its record, even though it sits after leg 02
+    const dropped = recordsOf(serializeSsim(file, file.legs, file.headers, [], new Set([1])));
+    expect(dropped.filter((l) => l[0] === "4").map((l) => l.slice(1, 14))).toEqual([leg2.slice(1, 14)]);
+  });
+
   it("is byte-identical to the input when nothing is removed", () => {
     const file = parseSsim(sample);
     expect(serializeSsim(file, file.legs, file.headers, [], new Set())).toBe(sample);
